@@ -1,6 +1,6 @@
 # Tide Table
 
-A coastline-prediction game prototype. You survey a hidden coastline with a limited number of anchors, reconstruct it from your measurements, and get scored on how much of the truth your survey actually bought you.
+A coastline-prediction game prototype. You survey a hidden coastline with a limited number of anchors, chart it yourself, and get scored on how much of the truth your survey actually bought you.
 
 **▶ Play it: <https://raw.githack.com/konstantinos-malavazos/tide-table/main/index.html>** (served straight from `main` — it updates on every push).
 
@@ -14,7 +14,9 @@ You are given a hidden coastline under a fog of war. Somewhere in the grid is a 
 
 Your only tool is a limited set of survey anchors. Dropping an anchor on a cell takes a measurement and reveals whether that cell is water, sand, or land. Each anchor costs you points at scoring time, so there is a real tension: sample densely along the coast to nail its shape, or hold anchors in reserve to probe for hidden anomalies.
 
-The predicted coastline redraws live as you survey. Then the truth is revealed and you are scored on how much closer your survey got you than a blind guess would have.
+Play has two beats. First you **survey**: the model's coastline redraws live as you spend anchors. Then you **lock the survey** — the anchors freeze, and the model's coastline stops being a live readout and becomes a *proposal*. In the second beat you **chart**: you paint over that proposal with a brush, and what you lock in is your chart, not the algorithm's. Then the truth is revealed and you are scored on how much closer you got than a blind guess would have.
+
+The chart phase exists because without it the player never actually predicts anything — they watch a machine interpolate and press a button. Painting is a real decision with a real downside: measured over 400 paired maps, a well-judged stroke around a found anomaly is worth **+38 points (95% CI ±6)** and an overconfident one **−143 (±11)**.
 
 The anomalies exist specifically because a smooth coastline model cannot see them coming. The only way to catch a lake or a headland is to spend an anchor measuring it directly — and then to corroborate it, because a single surprising measurement is indistinguishable from a coast that simply runs higher than expected.
 
@@ -22,10 +24,21 @@ The anomalies exist specifically because a smooth coastline model cannot see the
 
 Open `index.html` in any browser, or use the [hosted link](https://raw.githack.com/konstantinos-malavazos/tide-table/main/index.html). No build step, no dependencies.
 
+**Step 1 — survey.**
+
 - Click cells to drop survey anchors (up to 12). Click a cell again to remove its anchor. The predicted coast redraws live as you survey.
-- Read the **tide gauge** under the board before you spend anything. It costs nothing, and it tells you which stretch of coast still hides something — and how much of it — but never where in that stretch. An amber segment means there is something there you have not found; a red one means your chart has invented an exception that is not there, and you should pull the anchor that caused it.
+- Read the **tide gauge** under the board before you spend anything. It costs nothing, and it tells you which stretch of coast still hides something — and how much of it — but never where in that stretch. An amber segment means there is something there you have not found; a red one means your chart has invented an exception that is not there, and you should pull the anchor that caused it. The gauge counts *how much* is hidden in a stretch, never where in it: closing a reading is not the same as charting the thing correctly, and only the reveal tells you which you did.
 - If an anchor contradicts everything around it, the model marks it with a dashed purple ring and carves a **local exception** there instead of bending the whole coastline to reach it.
-- **Reveal truth** shows the real coast and scores you. Red outlines mark cells you got wrong inside the scored band; faint dotted outlines mark errors outside it, which cost nothing.
+
+**Step 2 — chart.** Press **Lock survey → chart it**. The anchors freeze and the board becomes yours to paint.
+
+- Pick a brush (water, sand, land) and click or drag across the board. **Undo stroke** puts a cell back to what the model proposed, and **Reset to the model's chart** drops every stroke at once.
+- Your own strokes are outlined in dark ink, so you can always see which cells are the model's answer and which are yours.
+- Anchored cells cannot be painted over — you measured those, they are not guesses.
+- **Back to survey** reopens the survey, and costs you your strokes: a chart drawn against a different set of measurements is a different chart.
+- Painting nothing is a legitimate choice. It scores exactly what the model's chart scores, to the point.
+
+**Step 3 — reveal.** **Lock in & reveal** shows the real coast and scores you. Red outlines mark cells you got wrong inside the scored band; faint dotted outlines mark errors outside it, which cost nothing. The result names what your strokes were worth against the chart the model handed you — which is often a negative number.
 - **New coastline** generates a fresh random map. **Today's coastline** returns to the daily one.
 - Pale, washed-out columns are the model telling you it is guessing there — no anchor near enough to hold the coast up. That is where your next anchor is worth spending.
 - After the reveal you get a spoiler-free result to share. Any map can be linked directly with `?seed=`.
@@ -42,6 +55,7 @@ Open `index.html` in any browser, or use the [hosted link](https://raw.githack.c
 - **Exceptions are placed from the gauge, not from the anchor.** A single anchor tells you one cell of a blob and nothing about its shape, so centring a fixed disc on it puts the patch wherever the anchor happened to land. The instrument already knows the horizontal shape: the run of columns it reports is the anomaly's width and the cells it counts there are its area, so the patch takes its column and size from the profile's centroid. What a column tally cannot give is the row — that is what the anchor is for, averaged when several land on the same feature. Where two anomalies share one unbroken run of columns, which happens on about half of all maps, the profile is split between them rather than swallowed into one blob that matches neither.
 - **Anomalies are outliers, not evidence.** Each anchor is re-checked against the consensus of *all the others* (leave-one-out). An anchor the rest of the evidence contradicts is dropped from the curve entirely and becomes a local patch of its own tile. Corroboration is required first: a lone surprising anchor is not enough, because with no neighbours it cannot be told apart from a coast that simply runs high.
 - Anchored cells are pinned to their true tile.
+- **The chart is the proposal plus your strokes.** Strokes are kept apart from the model's grid rather than baked into a copy of it, so a stroke that merely agrees with the model is not recorded as a stroke at all. That is what makes "paint nothing and you score exactly what the model scored" exact rather than approximate — and it is asserted in `test.mjs`.
 - **The tide gauge** counts, for each of 5 stretches of coast, the cells that no smooth coastline can account for — which is exactly the anomaly footprint, since everything else on the map is a smooth coast by construction. Your side of the reading is the same measurement taken against your own fit: how many cells your chart explains with a carved exception rather than with the coastline. The difference is what you have left to find.
 
 ### Why the gauge measures that, and not water
@@ -64,9 +78,23 @@ The score has two halves (55% coastline, 45% hunt), because coastline accuracy a
 **Coastline survey (40%).**
 
 - That raw percentage is then measured **against the blind guess** — the prediction the model would have made with no survey at all, which already scores ~62% on its own. `survey value = (yours − blind) / (1 − blind)`. An unsurveyed map is worth exactly 0.
-**Anomalies charted (45%).** How much of what the tide gauge counted your chart accounts for, with invented exceptions subtracted. This is the hunt, scored on its own terms.
+**Anomalies charted (45%).** The same lift-above-blind-guess measure as the coastline half, with the same tiered credit, but computed only over the cells the anomalies actually occupy. An exception carved where there is nothing costs 0.25 of a footprint cell — the coastline term already pays for a wrong cell, so this only has to stop a brush from buying hunt credit with noise. A cell you measured can never count as invented.
+
+> **This term used to count cells, and that was wrong.** Through v7 it asked how many exception cells your chart carved in each stretch, against how many were hidden there, and never asked whether they were in the right place. Paired over 800 maps:
+>
+> | strategy | old (counting) | new (positional) | old pts | new pts |
+> |---|---|---|---|---|
+> | survey the coast, anchor every anomaly | 53% | 57% | 486 | 505 |
+> | grind 11 anchors along the coast | 60% | 24% | 457 | 306 |
+> | spend nothing, paint the gauge's own reading into its own sector | 99% | 3% | 593 | 23 |
+>
+> Two things fall out. Walking the coast carves ~48 exception cells incidentally, only half of them on a real anomaly, and the counting term paid for all of them — so the term meant to reward hunting scored grinding *higher* than a survey that found everything. And once the player holds a brush it stops being a scoring quirk and becomes the whole game: painting the gauge's reported count into its reported sector, from zero anchors and zero information, beat honest play by **+106 points (95% CI ±18)**. Scored positionally the same move loses by 482.
+>
+> Note the first row: honest play scores 505 against 486. A player who was already charting anomalies properly is slightly *better* off — the change takes nothing from them, it only stops giving away what was never earned.
 
 Both are blended, then multiplied by an anchor-efficiency bonus: `1 + (12 - anchorsUsed) * 0.04`. Final points = blended value x bonus x 1000.
+
+The tide gauge is deliberately *not* scored positionally, and stays a pure count. A gauge that told you your patch was in the wrong place would be handing you, for free, the one thing anchors are for. The share string is written after the reveal, so it can be honest: its marks report how much of each stretch you actually got right.
 
 Note what the bonus can and cannot do. It multiplies every strategy by the same factor for the same spend, so **no value of it can rescue a strategy that is worse at equal spend** — and gauge-guided hunting was exactly that until the hunt term existed, losing to plain coastal sampling at 11 anchors. Tuning the bonus was never going to fix it; scoring the hunt was.
 
@@ -90,7 +118,18 @@ Measured over 500 maps, against a player who walks the coast with 6 anchors and 
 | 6 blind probes | 12.0 | 71.7 | 24.0% | 240 |
 | gauge-guided probes | 10.9 | 72.2 | 25.3% | 263 |
 
-The gauge beats blind probing outright at the same spend. It did not, on its own, beat *not* probing — measured against coastal sampling at equal budget it still lost, because probes that miss teach you nothing while a coast anchor always improves the fit. That is what the hunt term in the scoring fixes: with it, hunting is the winning line by +18 points (95% CI ±16, paired over 800 maps).
+The gauge beats blind probing outright at the same spend. It did not, on its own, beat *not* probing — measured against coastal sampling at equal budget it still lost, because probes that miss teach you nothing while a coast anchor always improves the fit.
+
+**The claim that the hunt term fixed that was wrong, and v8 withdraws it.** v5 reported that scoring the hunt made gauge-guided probing the winning line by +18 points. That margin came from the counting hunt term described above, which paid grinding and probing alike for incidental exception cells and happened to pay the prober slightly more. Scored positionally, paired over 800 maps at an 11-anchor budget:
+
+| comparison | result |
+|---|---|
+| finding the anomalies vs grinding the coast | **+207 pts (95% CI ±14)** |
+| gauge-guided probing vs grinding the coast | −7 pts (±11) — level, if anything behind |
+
+So *finding* anomalies pays enormously, and much more clearly than it used to. *Searching* for them with the current prober does not, and the reason is measurable: the gauge localises to a sector of 6 columns by 16 rows, an anomaly is about 13 cells, and the prober lands on a hidden cell **16% of the time** (218 hits in 1,335 probes) — barely better than a uniform draw inside the sector. A probe's expected value is therefore about a sixth of a find, which is roughly what an anchor costs.
+
+Raising `HUNT_WEIGHT` does not fix this and it was not raised. Swept from 0.35 to 0.75, probing only reaches +14 (±14) against grinding at 0.65 — still not significant — while the weight tuned to rescue it takes score off the coastline, where v6 deliberately put it. This is the same lesson the anchor bonus taught in v5: a global constant cannot rescue a strategy that is worse at equal spend. What the search needs is a **finer instrument** — the column sounding in DESIGN.md item 7 — not a different weight.
 
 ## Repository contents
 
@@ -107,22 +146,24 @@ The gauge beats blind probing outright at the same spend. It did not, on its own
 node test.mjs
 ```
 
-It runs the game headlessly over 200 fixed maps and asserts the balance properties the design depends on: that an unsurveyed map is worth nothing, that surveying the coast beats not surveying, that finding the anomalies beats surveying the coast alone, that anomalies are detected more often than not, and that a detected anomaly actually improves the coastline.
+It runs the game headlessly over fixed maps and asserts the balance properties the design depends on, not just that nothing throws: that an unsurveyed map is worth nothing, that surveying the coast beats not surveying, that finding the anomalies beats grinding the coast at the same budget, that anomalies are detected more often than not, and that a detected anomaly actually improves the coastline.
+
+Since v8 it also asserts the properties the brush depends on — that painting nothing scores exactly the model's chart, that a stroke agreeing with the model is not recorded as a stroke, that a measured cell cannot be painted over, that the brush can win (painting the truth: +643 pts) and can lose (an overconfident stroke: −143) — and it carries a regression guard for the scoring hole that painting exposed: painting the gauge's own reading back at it must earn almost nothing.
 
 ## Future work
 
 See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
-- Commit before the reveal, or let the player paint over the model's guess — they still never actually predict anything themselves.
-- Mobile and touch layout.
-- Seeded daily coastlines and a spoiler-free share string.
-- Show the model's own uncertainty so the player can see where an anchor is worth spending.
+- **A column sounding** — a costed instrument that narrows the search to a single column without giving away the row. This is now the highest-value item in the repository: with the hunt scored positionally, finding an anomaly is worth ~207 points but searching for one is break-even, purely because the gauge's sector is too coarse to aim inside.
+- Mobile and touch layout. Painting is a drag gesture and drag does not currently work under touch, so the chart phase is click-only on a phone.
 - Close the remaining gap in the smooth fit: 12 coast anchors reach 73%, but perfect knowledge of the coastline would reach 83%.
+- Stage the reveal so it reads as a moment rather than a form validation result.
 - WFC-based anomaly generation (procedurally planting features that violate the smooth model).
-- Mobile/touch layout.
+- Per-seed normalisation, without which scores are not comparable across maps.
 
 ## Changelog
 
+- **v8** - the player predicts. Play splits into a survey beat and a chart beat with an explicit lock-in between: the anchors freeze, the model's coastline becomes a proposal, and the player paints over it before revealing. A careful stroke is worth +38 pts (95% CI ±6) and an overconfident one −143 (±11), so the brush is a real decision in both directions. Painting also exposed a hole in the scoring: the hunt term counted exception cells without asking where they were, so painting the gauge's own reading back at it, from zero anchors, beat honest play by +106 pts. The hunt is now scored positionally, as lift above the blind guess over the cells the anomalies actually occupy. Two earlier claims are withdrawn as a result - see the scoring section and DESIGN.md.
 - **v7** - daily coastlines and shareable results (`?seed=`), a hidden anomaly count of 0–4 instead of always 2, and the model's own uncertainty drawn on the board so you can see which columns are guesswork. Vertical localisation was investigated and rejected: see DESIGN.md.
 - **v6** - exceptions are placed from the gauge's column profile instead of centred on the anchor, and merged anomaly runs are split between features. Charting the anomalies now closes 52% of the gauge, up from 36%, and where in a blob the anchor lands no longer affects the horizontal fit at all (32% → 52% closure when anchoring off centre). The hunt weight drops from 0.60 to 0.45 as a result, leaving more of the score on the coastline.
 - **v5** - the hunt is scored: 60% of the score is now how much of the tide gauge your chart closes, so hunting anomalies beats grinding the coastline at the same budget (+18 pts, 95% CI ±16, paired over 800 maps). The gauge also corroborates the model - where the instrument reports something unexplained, one contradicting anchor is enough to carve an exception instead of two, lifting detection from 74% to 80%.

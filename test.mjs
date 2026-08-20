@@ -5,7 +5,7 @@ if (!m) { console.error('no script found'); process.exit(1); }
 const src = m[1];
 
 const makeEl = () => ({ style:{}, dataset:{}, innerHTML:'', textContent:'', className:'',
-  classList:{ add(){}, remove(){} }, addEventListener(){}, appendChild(){}, setAttribute(){} });
+  classList:{ add(){}, remove(){}, toggle(){} }, addEventListener(){}, appendChild(){}, setAttribute(){} });
 globalThis.document = {
   readyState:'complete',
   getElementById:()=>({ style:{}, innerHTML:'', textContent:'', addEventListener(){}, appendChild(){} }),
@@ -16,7 +16,8 @@ new Function('window','document', src)(globalThis.window, globalThis.document);
 
 const TT = globalThis.TideTable;
 const { generate, predict, coastlineScore, scoreDetail, huntScore, gauge, unexplainedCells, dailySeed, shareText, getSeed, getSupport, getTruth, getPredicted,
-        getAnomalies, getTruthAnomalies, setAnchor, clearAnchors, ROWS, COLS, MAX_ANCHORS, GAUGE_SECTORS } = TT;
+        getAnomalies, getTruthAnomalies, setAnchor, clearAnchors, ROWS, COLS, MAX_ANCHORS, GAUGE_SECTORS,
+        lockSurvey, backToSurvey, resetChart, paint, setBrush, getPhase, getProposal, getStrokeCount, getSmooth, getTruthSmooth } = TT;
 
 // deterministic maps so the assertions below mean the same thing on every run
 let _s = 20260820;
@@ -90,10 +91,22 @@ check('more coast anchors do not make the fit worse',
       ladder[ladder.length-1] >= ladder[0], ladder.map(x=>(x*100).toFixed(0)).join(' -> '));
 
 // --- the economy ----------------------------------------------------------
-// Hunting anomalies must be a viable line of play, not a trap: a lean survey
-// that goes looking should beat grinding out the coastline with the same budget.
+// Finding anomalies must be a viable line of play, not a trap: a lean survey
+// that finds them should beat grinding out the coastline with the same budget.
 // Compared pairwise on identical maps, because map-to-map variance is far larger
 // than the effect and swamps an unpaired comparison.
+//
+// NOTE, and this is a correction to what v5 and v6 claimed. Those versions
+// asserted that *gauge-guided probing* beat grinding by +18 pts. That result came
+// from a hunt term that counted exception cells without asking where they were,
+// and grinding produces plenty of those incidentally. Scored positionally (v8),
+// probing with this bot is level with grinding - it lands on a hidden cell only
+// 16% of the time, because the gauge localises to a 6x16 sector and an anomaly is
+// ~13 cells, so a probe is barely better than a uniform draw inside the sector.
+// What is true, and far more strongly than before, is the property below: a
+// survey that *finds* the anomalies beats one that grinds the coast. Making the
+// search itself pay needs a finer instrument, not a different weight - see
+// DESIGN.md item 7.
 function huntRun(k,budget){
   clearAnchors(); walkCoast(k); predict();
   const used=new Set(); let spent=k;
@@ -112,23 +125,30 @@ function huntRun(k,budget){
   }
   return spent;
 }
-const EN=800, dHunt=[], ptsLazy=[], ptsHunt=[], ptsGrind=[];
+const ci95=d=>{ const m=mean(d);
+  return 1.96*Math.sqrt(d.reduce((s,x)=>s+(x-m)*(x-m),0)/(d.length-1))/Math.sqrt(d.length); };
+
+const EN=800, dFind=[], dProbe=[], ptsLazy=[], ptsFind=[], ptsHunt=[], ptsGrind=[];
 for(let i=0;i<EN;i++){
   generate();
   huntRun(4,11);            const h=scoreDetail().points;
   clearAnchors(); walkCoast(11); predict(); const g=scoreDetail().points;
+  clearAnchors(); walkCoast(6);
+  for(const a of getTruthAnomalies()) setAnchor(a.r,a.c);
+  predict();                const f=scoreDetail().points;
   clearAnchors(); predict(); ptsLazy.push(scoreDetail().points);
-  ptsHunt.push(h); ptsGrind.push(g); dHunt.push(h-g);
+  ptsHunt.push(h); ptsGrind.push(g); ptsFind.push(f);
+  dFind.push(f-g); dProbe.push(h-g);
 }
-const md=mean(dHunt);
-const ci=1.96*Math.sqrt(dHunt.reduce((s,x)=>s+(x-md)*(x-md),0)/(dHunt.length-1))/Math.sqrt(dHunt.length);
+const mf=mean(dFind), cf=ci95(dFind), mp=mean(dProbe), cp=ci95(dProbe);
 console.log('\npoints  lazy '+mean(ptsLazy).toFixed(0)+'   grind the coast '+mean(ptsGrind).toFixed(0)
-  +'   hunt with the gauge '+mean(ptsHunt).toFixed(0)
-  +'   (hunt - grind, paired: '+md.toFixed(0)+' +/- '+ci.toFixed(0)+')\n');
+  +'   probe with the gauge '+mean(ptsHunt).toFixed(0)+'   find the anomalies '+mean(ptsFind).toFixed(0));
+console.log('paired vs grinding:  find '+(mf>=0?'+':'')+mf.toFixed(0)+' +/- '+cf.toFixed(0)
+  +'   probe '+(mp>=0?'+':'')+mp.toFixed(0)+' +/- '+cp.toFixed(0)+'  (probing is level: see the note above)\n');
 
 check('doing nothing scores nothing', mean(ptsLazy)===0);
-check('hunting beats grinding the coast at the same budget', md-ci > 0,
-      '+'+md.toFixed(0)+' pts, 95% CI +/-'+ci.toFixed(0));
+check('finding the anomalies beats grinding the coast at the same budget', mf-cf > 0,
+      '+'+mf.toFixed(0)+' pts, 95% CI +/-'+cf.toFixed(0));
 check('the score is the declared blend of coastline and hunt', (()=>{
   generate(); clearAnchors(); walkCoast(8); predict();
   const d=scoreDetail();
@@ -150,8 +170,8 @@ check('an uncharted map closes none of the gauge', hBefore===0);
 // Patches are placed from the gauge's own column profile, so how far off-centre
 // the anchor landed no longer decides how good the patch is. What is left is the
 // row, which a column tally cannot give and the anchor must supply.
-check('charting the anomalies closes most of the gauge', hAfter/hMaps > 0.45,
-      (hAfter/hMaps*100).toFixed(0)+'% closed over '+hMaps+' maps');
+check('charting the anomalies wins most of the hunt', hAfter/hMaps > 0.45,
+      (hAfter/hMaps*100).toFixed(0)+'% won over '+hMaps+' maps');
 
 // --- seeds, hidden counts, uncertainty ------------------------------------
 check('the same seed always gives the same coastline', (()=>{
@@ -238,6 +258,135 @@ check('the gauge never invents anomalies on a smooth coast', (()=>{
     if(per.some(x=>x!==0)) return false; }
   return true;
 })());
+
+// --- the chart phase, and the brush ---------------------------------------
+// The player now commits before the reveal and paints over what the model
+// proposed, so the brush is a scoring surface. Three things have to hold: the
+// brush must be able to win, it must be able to lose, and it must never buy
+// credit the survey did not pay for.
+
+const survey6 = () => { clearAnchors(); walkCoast(6);
+  for(const a of getTruthAnomalies()) setAnchor(a.r,a.c); lockSurvey(); };
+
+// a plausible human stroke: the model flagged something here, so fill the ring
+// around the anchor with the tile that anchor measured
+function ringStroke(rad){
+  for(const a of getAnomalies().map(x=>({r:x.r,c:x.c,tile:x.tile}))){
+    setBrush(a.tile);
+    for(let r=Math.max(0,a.r-rad);r<=Math.min(ROWS-1,a.r+rad);r++)
+      for(let c=Math.max(0,a.c-rad);c<=Math.min(COLS-1,a.c+rad);c++)
+        if(Math.hypot(c-a.c,r-a.r)<=rad) paint(r,c);
+  }
+}
+function paintTruth(){ const t=getTruth();
+  for(let k=0;k<3;k++){ setBrush(k);
+    for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(t[r][c]===k) paint(r,c); } }
+// The move that broke the counting hunt term: spend nothing, then paint exactly
+// as many exception cells as the gauge reports into the sector it reports them
+// in, at a row chosen with no information at all.
+function phantomPaint(){
+  const pr=getPredicted();
+  for(const g of gauge()){
+    let need=g.short; if(need<=0) continue;
+    const mid=Math.floor((g.from+g.to)/2);
+    let coast=Math.floor(ROWS/2);
+    for(let r=0;r<ROWS;r++) if(pr[r][mid]===1){ coast=r; break; }
+    setBrush(2);
+    outer: for(let d=1;d<ROWS;d++) for(let c=Math.max(g.from,mid-2);c<Math.min(g.to,mid+3);c++){
+      const r=coast+d; if(r>=ROWS) continue;
+      paint(r,c); if(--need<=0) break outer;
+    }
+  }
+}
+
+check('the survey locks before the reveal', (()=>{
+  generate(); clearAnchors(); walkCoast(4);
+  if(getPhase()!=='survey') return false;
+  lockSurvey();
+  return getPhase()==='chart' && !!getProposal() && getStrokeCount()===0;
+})());
+check('painting nothing scores exactly the model\u2019s chart', (()=>{
+  generate(); survey6();
+  return scoreDetail().points===scoreDetail(getProposal()).points;
+})());
+check('a stroke that agrees with the model is not a stroke', (()=>{
+  generate(); survey6();
+  const p=getProposal();
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){ setBrush(p[r][c]); paint(r,c); }
+  return getStrokeCount()===0 && scoreDetail().points===scoreDetail(p).points;
+})());
+check('a measured cell cannot be painted over', (()=>{
+  generate(); clearAnchors(); walkCoast(6); lockSurvey();
+  const t=getTruth();
+  // the first column walkCoast(6) anchors is column 0's topmost sand cell
+  let r0=-1; for(let r=0;r<ROWS;r++) if(t[r][0]===1){ r0=r; break; }
+  if(r0<0) return true;
+  setBrush((t[r0][0]+1)%3); paint(r0,0);
+  return getStrokeCount()===0 && getPredicted()[r0][0]===t[r0][0];
+})());
+check('going back to the survey discards the chart', (()=>{
+  generate(); survey6(); ringStroke(2);
+  if(getStrokeCount()===0) return true;   // nothing was flagged on this map
+  backToSurvey();
+  return getPhase()==='survey' && getStrokeCount()===0 && getProposal()===null;
+})());
+check('resetting the chart restores the model\u2019s proposal', (()=>{
+  generate(); survey6();
+  const before=scoreDetail().points;
+  ringStroke(3); resetChart();
+  return getStrokeCount()===0 && scoreDetail().points===before;
+})());
+
+// Paired on an explicit seed per map: map-to-map variance is several times the
+// effect here, and an unpaired run of the same comparison widens the interval
+// four-fold (+60 +/- 20 unpaired against +45 +/- 5 paired).
+const PN=400, pModel=[], pR2=[], pR3=[], pTruth=[], pPhantom=[];
+for(let i=0;i<PN;i++){
+  const s=9000+i;
+  generate(s); survey6();                     pModel.push(scoreDetail().points);
+  generate(s); survey6(); ringStroke(2);      pR2.push(scoreDetail().points);
+  generate(s); survey6(); ringStroke(3);      pR3.push(scoreDetail().points);
+  generate(s); survey6(); paintTruth();       pTruth.push(scoreDetail().points);
+  generate(s); clearAnchors(); lockSurvey(); phantomPaint();
+                                              pPhantom.push(scoreDetail().points);
+}
+const dR2=pR2.map((x,i)=>x-pModel[i]), dR3=pR3.map((x,i)=>x-pModel[i]),
+      dT=pTruth.map((x,i)=>x-pModel[i]);
+console.log('\npainting, over '+PN+' maps that were surveyed for every anomaly');
+console.log('  model\u2019s chart, unpainted '+mean(pModel).toFixed(0)
+  +'   careful stroke '+mean(pR2).toFixed(0)+' ('+(mean(dR2)>=0?'+':'')+mean(dR2).toFixed(0)+' +/- '+ci95(dR2).toFixed(0)+')'
+  +'   overconfident '+mean(pR3).toFixed(0)+' ('+(mean(dR3)>=0?'+':'')+mean(dR3).toFixed(0)+' +/- '+ci95(dR3).toFixed(0)+')');
+console.log('  paint the truth '+mean(pTruth).toFixed(0)+' ('+(mean(dT)>=0?'+':'')+mean(dT).toFixed(0)+')'
+  +'   paint the gauge\u2019s own reading, 0 anchors '+mean(pPhantom).toFixed(0)+'\n');
+
+// A chart that is right everywhere must be charged for nothing. The invented
+// term compares your chart against your own *smooth* coast, which is only an
+// estimate of the true one - so without the "and also wrong" clause, every
+// accurate coastline correction outside the anomaly footprint was billed as a
+// phantom anomaly, and painting the truth lost points on some maps.
+check('a pixel-perfect chart wins the whole hunt', (()=>{
+  let n=0, red=0, worst=1;
+  for(let i=0;i<120;i++){
+    generate(6000+i); clearAnchors(); walkCoast(6); lockSurvey(); paintTruth();
+    for(const g of TT.huntBySector()) if(g.invented>0) red++;
+    const h=scoreDetail().hunt;
+    if(h!==null){ n++; worst=Math.min(worst,h); }
+  }
+  return n>0 && worst===1 && red===0;
+})(), 'and is charged for no invented exception');
+
+check('the brush can win: painting the truth beats the model\u2019s chart',
+      mean(dT)-ci95(dT) > 0, '+'+mean(dT).toFixed(0)+' pts, 95% CI +/-'+ci95(dT).toFixed(0));
+check('a careful stroke pays', mean(dR2)-ci95(dR2) > 0,
+      '+'+mean(dR2).toFixed(0)+' pts, 95% CI +/-'+ci95(dR2).toFixed(0));
+check('the brush can lose: an overconfident stroke costs', mean(dR3)+ci95(dR3) < 0,
+      mean(dR3).toFixed(0)+' pts, 95% CI +/-'+ci95(dR3).toFixed(0));
+// The regression guard for the whole scoring change. Under the counting hunt term
+// this move scored 586 against 498 for playing honestly - painting the gauge's
+// own answer back at it, from zero anchors, was the best line in the game.
+check('painting the gauge\u2019s reading back at it earns almost nothing',
+      mean(pPhantom)*3 < mean(pModel),
+      mean(pPhantom).toFixed(0)+' pts vs '+mean(pModel).toFixed(0)+' for finding them');
 
 generate(); clearAnchors(); walkCoast(8);
 for(const a of getTruthAnomalies()) setAnchor(a.r,a.c);
