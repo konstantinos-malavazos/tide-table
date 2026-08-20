@@ -22,13 +22,17 @@
   .cell.w{background:var(--water)} .cell.s{background:var(--sand)} .cell.l{background:var(--land)}
   .cell.pred-w{background:var(--pw)} .cell.pred-s{background:var(--ps)} .cell.pred-l{background:var(--pl)}
   .cell.anchor::after{content:'';position:absolute;inset:6px;border-radius:50%;background:#fff;box-shadow:0 0 0 2px rgba(0,0,0,.55)}
+  .cell.anom::before{content:'';position:absolute;inset:1px;border-radius:3px;border:2px dashed #8e44ad}
+  .cell.patch{box-shadow:inset 0 0 0 1px rgba(142,68,173,.35)}
   .cell.bad{outline:2px solid #d64545;outline-offset:-2px;z-index:1}
+  .cell.miss{outline:2px dotted rgba(214,69,69,.4);outline-offset:-2px}
   .bar{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin:16px 0 6px}
   button{font:inherit;font-size:14px;padding:8px 14px;border-radius:6px;border:1px solid #b9c6cf;background:#fff;color:var(--ink);cursor:pointer}
   button:hover{background:#eef3f6}
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   button:disabled{opacity:.45;cursor:default}
-  .meta{color:var(--muted);font-size:13px;margin:4px 0;text-align:center}
+  .meta{color:var(--muted);font-size:13px;margin:4px 0;text-align:center;line-height:1.5}
+  .meta b{color:var(--ink)}
   #score{display:none;margin-top:10px;font-size:15px;text-align:center;line-height:1.5}
   #score .big{font-size:28px;font-weight:700;color:var(--accent)}
   .legend{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:14px;color:var(--muted);font-size:12px}
@@ -38,7 +42,7 @@
 </head>
 <body>
   <h1>Tide Table</h1>
-  <div class="sub">Predict the coastline. Click cells to drop survey anchors (each reveals the true tile there) and the predicted coast redraws live as you survey. Reveal the truth to see how close you land. Fewer anchors = bigger bonus. Watch for surprises: lakes and headlands that break the smooth model.</div>
+  <div class="sub">Predict the coastline. Click cells to drop survey anchors (each reveals the true tile there) and the predicted coast redraws live as you survey. Reveal the truth to see how close you land. Fewer anchors = bigger bonus. Watch for surprises: lakes and headlands that break the smooth model — corroborate one with a nearby anchor and the model will carve out an exception for it.</div>
   <div class="wrap"><div id="board"></div></div>
   <div class="bar">
     <button id="reveal" class="primary">Reveal truth</button>
@@ -53,6 +57,7 @@
     <span><span class="sw" style="background:var(--land)"></span>Land</span>
     <span><span class="sw" style="background:#fff;box-shadow:0 0 0 1px #888"></span>Anchor (surveyed)</span>
     <span><span class="sw" style="background:var(--ps)"></span>Prediction (live)</span>
+    <span><span class="sw" style="background:#fff;box-shadow:0 0 0 2px #8e44ad"></span>Anomaly (model carved an exception)</span>
     <span><span class="sw" style="background:#d64545"></span>Wrong prediction</span>
   </div>
 
@@ -61,13 +66,25 @@
 const COLS=30, ROWS=16, MAX_ANCHORS=12;
 const WATER=0, SAND=1, LAND=2;
 const TILE_CLS=['w','s','l'];
-const SIGMA=3.2, WBASE=0.30;
+
+const BAND=0.9;        // |row - sea level| <= BAND is sand; beyond it, water below / land above
+const SIG_MAX=5.0;     // how far one anchor's evidence carries when the coast is barely surveyed
+const SIG_MIN=1.15;    // ...and once it is densely surveyed: fine detail stops being smoothed away
+const SIG_K=0.8;
+const WBASE=0.30;      // pull toward a flat mid-grid coast where nothing has been surveyed
+const FIT_ITERS=6;     // robust-fit relaxation passes
+const OUTLIER_TOL=1.4; // rows of contradiction before an anchor is read as an anomaly
+const CONF_MIN=0.35;   // corroboration needed from other anchors before we believe it is one
+const CONF_SIGMA=4.0;  // ...measured over a fixed radius: "is there other evidence near this column"
+                       // is a different question from how far one measurement generalises
+const PATCH_CORE=2.2, PATCH_RING=2.9;
+const ANCHOR_COST=0.04;
 
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 
 let seed=0, rng=mulberry32(seed);
 let trueSeaFn=null;
-let truth=[], anchors=new Map(), predicted=null, revealed=false;
+let truth=[], truthAnomalies=[], anchors=new Map(), predicted=null, anomalies=[], revealed=false;
 
 function generate(){
   seed=(Math.random()*1e9)|0;
@@ -78,6 +95,7 @@ function generate(){
   plantAnomalies();
   anchors=new Map();
   predicted=null;
+  anomalies=[];
   revealed=false;
   render();
   updateMeta();
@@ -88,54 +106,154 @@ function buildGrid(seaFn){
   const g=[];
   for(let r=0;r<ROWS;r++){ g[r]=[]; for(let c=0;c<COLS;c++){
     const d=r-seaFn(c);
-    g[r][c] = d>0.9 ? WATER : (d<-0.9 ? LAND : SAND);
+    g[r][c] = d>BAND ? WATER : (d<-BAND ? LAND : SAND);
   }}
   return g;
 }
 
 function plantAnomalies(){
+  truthAnomalies=[];
   let done=0, tries=0;
   while(done<1 && tries<400){ tries++;
     const cr=3+Math.floor(rng()*(ROWS-6));
     const cc=3+Math.floor(rng()*(COLS-6));
-    if((cr - trueSeaFn(cc)) < -2.2){ applyPatch(cr,cc,2.0,3.1,WATER,SAND); done++; }
+    if((cr - trueSeaFn(cc)) < -2.2){ applyPatch(truth,cr,cc,2.0,3.1,WATER,SAND); truthAnomalies.push({r:cr,c:cc,tile:WATER,kind:'lake'}); done++; }
   }
   tries=0;
   while(done<2 && tries<400){ tries++;
     const cr=3+Math.floor(rng()*(ROWS-6));
     const cc=3+Math.floor(rng()*(COLS-6));
     const d=cr - trueSeaFn(cc);
-    if(d>0.6 && d<2.0){ applyPatch(cr,cc,1.8,2.9,LAND,SAND); done++; }
+    if(d>0.6 && d<2.0){ applyPatch(truth,cr,cc,1.8,2.9,LAND,SAND); truthAnomalies.push({r:cr,c:cc,tile:LAND,kind:'headland'}); done++; }
   }
 }
 
-function applyPatch(cr,cc,coreR,ringR,coreTile,ringTile){
+function applyPatch(grid,cr,cc,coreR,ringR,coreTile,ringTile){
   for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
     const d=Math.hypot(c-cc,r-cr);
-    if(d<=coreR) truth[r][c]=coreTile;
-    else if(d<=ringR && truth[r][c]!==coreTile) truth[r][c]=ringTile;
+    if(d<=coreR) grid[r][c]=coreTile;
+    else if(d<=ringR && grid[r][c]!==coreTile) grid[r][c]=ringTile;
   }
 }
 
-function predSea(c){
-  let num=ROWS*0.5*WBASE, den=WBASE;
+/* ---- prediction -----------------------------------------------------------
+An anchor constrains the sea level in its column, but not all anchors say the
+same kind of thing. Sand pins the level to its row. Water and land only bound it
+- a cell of deep water means "the coast is somewhere above here" and nothing
+more, so it must not be read as a measurement of where the coast actually is.
+
+The global curve is then fit only from the anchors that agree with each other.
+An anchor the rest of the evidence contradicts is not evidence about sea level
+at all: it is a lake or a headland. Bending the coastline to reach it would wreck
+the fit for ten columns either side, so instead it is dropped from the fit and
+becomes a local patch. Corroboration is required before we believe it (CONF_MIN):
+one lone surprising anchor is indistinguishable from a coast that simply runs
+higher than the prior, so it takes a neighbour to tell those apart.
+--------------------------------------------------------------------------- */
+
+function anchorList(){
+  const out=[];
   for(const [key,tile] of anchors){
-    const parts=key.split(','), r=+parts[0], cc=+parts[1];
-    const est = r + (tile===WATER ? -1.3 : tile===LAND ? 1.3 : 0);
-    const w = Math.exp(-((c-cc)*(c-cc))/(2*SIGMA*SIGMA));
-    num += est*w; den += w;
+    const p=key.split(',');
+    out.push({r:+p[0], c:+p[1], tile:tile});
   }
-  return num/den;
+  return out;
+}
+
+// Every anchor is an interval constraint on the sea level in its column - exactly
+// the inverse of the threshold that built the grid. Note how little the extremes
+// say: a cell of deep water only means "the coast is somewhere above here".
+//   water at row r  ->  sea <= r - BAND
+//   sand  at row r  ->  r - BAND <= sea <= r + BAND
+//   land  at row r  ->  sea >= r + BAND
+function boundsOf(a){
+  if(a.tile===WATER) return [-Infinity, a.r-BAND];
+  if(a.tile===LAND)  return [a.r+BAND, Infinity];
+  return [a.r-BAND, a.r+BAND];
+}
+
+// Where this anchor wants the level, given what everything else says. Sand is a
+// measurement, so it pulls to the middle of its interval - its best point estimate.
+// Water and land are only barriers: they pull the consensus back to the edge of
+// what they permit, and say nothing at all while it stays inside.
+function pullOf(a,level){
+  if(a.tile===SAND) return a.r;
+  const b=boundsOf(a);
+  return Math.min(Math.max(level,b[0]),b[1]);
+}
+
+// distance from the consensus to the nearest level this anchor would permit
+function violation(a,level){
+  const b=boundsOf(a);
+  return Math.abs(level-Math.min(Math.max(level,b[0]),b[1]));
+}
+
+// Bandwidth follows the survey: sparse anchors can only justify a broad, smooth
+// coast, but once you have sampled densely the model should stop blurring away the
+// detail you paid for.
+function bandwidth(n){ return Math.max(SIG_MIN, Math.min(SIG_MAX, COLS/(SIG_K*Math.max(1,n)))); }
+function kern(c1,c2,sig){ return Math.exp(-((c1-c2)*(c1-c2))/(2*sig*sig)); }
+
+function fitSea(list){
+  const sig=bandwidth(list.length);
+  const lv=list.map(a=>pullOf(a,ROWS*0.5));
+  const w=list.map(()=>1);
+  // Sea level at column c, optionally leaving one anchor out of the vote.
+  // Locally linear rather than a plain weighted average: an average sags back
+  // toward the prior between anchors, which throws away the shape of the coast
+  // exactly where there is no anchor to hold it up.
+  const at=(c,skip)=>{
+    let S0=WBASE,S1=0,S2=0,T0=ROWS*0.5*WBASE,T1=0;
+    for(let i=0;i<list.length;i++){
+      if(i===skip) continue;
+      const k=kern(c,list[i].c,sig)*w[i];
+      if(k<1e-6) continue;
+      const x=list[i].c-c, y=lv[i];
+      S0+=k; S1+=k*x; S2+=k*x*x; T0+=k*y; T1+=k*x*y;
+    }
+    const den=S0*S2-S1*S1;
+    const est = Math.abs(den)<1e-9 ? T0/S0 : (T0*S2-T1*S1)/den;
+    return Math.max(-2,Math.min(ROWS+2,est));
+  };
+  // how much corroboration column c has from anchors other than `skip`
+  const conf=(c,skip)=>{
+    let den=0;
+    for(let i=0;i<list.length;i++) if(i!==skip) den+=kern(c,list[i].c,CONF_SIGMA)*w[i];
+    return den;
+  };
+  for(let it=0;it<FIT_ITERS;it++){
+    const loo=list.map((a,i)=>at(a.c,i));
+    for(let i=0;i<list.length;i++){
+      const contradicted = violation(list[i],loo[i])>OUTLIER_TOL && conf(list[i].c,i)>=CONF_MIN;
+      w[i] = contradicted ? 0 : 1;
+      lv[i] = pullOf(list[i],loo[i]);
+    }
+  }
+  return {
+    level: c=>at(c,-1),
+    outliers: list.filter((a,i)=>w[i]===0)
+  };
 }
 
 function predict(){
-  const pred=buildGrid(predSea);
-  for(const [key,tile] of anchors){
-    const parts=key.split(','), r=+parts[0], c=+parts[1];
-    pred[r][c]=tile;
-  }
+  const list=anchorList();
+  const fit=fitSea(list);
+  const pred=buildGrid(fit.level);
+  for(const a of fit.outliers) applyPatch(pred,a.r,a.c,PATCH_CORE,PATCH_RING,a.tile,SAND);
+  for(const a of list) pred[a.r][a.c]=a.tile;
   predicted=pred;
+  anomalies=fit.outliers;
   return pred;
+}
+
+function isAnomaly(r,c){
+  for(const a of anomalies) if(a.r===r && a.c===c) return true;
+  return false;
+}
+
+function inPatch(r,c){
+  for(const a of anomalies) if(Math.hypot(c-a.c,r-a.r)<=PATCH_RING) return true;
+  return false;
 }
 
 function coastMask(){
@@ -149,6 +267,30 @@ function coastMask(){
     }
   }
   return m;
+}
+
+// The prediction the model would have made with no survey at all. A flat coast
+// through the middle of the grid already scores ~62% on its own, so an absolute
+// percentage mostly measures the map, not the player: everything is scored as
+// lift above this.
+function baselineScore(){
+  const flat=buildGrid(fitSea([]).level);
+  const m=coastMask();
+  let sum=0,cnt=0;
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    if(!m[r][c]) continue;
+    const d=Math.abs(flat[r][c]-truth[r][c]);
+    sum += d===0?1 : d===1?0.4 : 0;
+    cnt++;
+  }
+  return cnt? sum/cnt : 0;
+}
+
+function scoreDetail(){
+  const acc=coastlineScore(), base=baselineScore();
+  const lift = base>=1 ? 0 : Math.max(0,(acc-base)/(1-base));
+  const eff = 1+(MAX_ANCHORS-anchors.size)*ANCHOR_COST;
+  return {acc,base,lift,eff,points:Math.round(lift*eff*1000)};
 }
 
 function coastlineScore(){
@@ -170,7 +312,8 @@ function onClick(r,c){
   if(anchors.has(key)) anchors.delete(key);
   else if(anchors.size<MAX_ANCHORS) anchors.set(key,truth[r][c]);
   else return;
-  predicted = anchors.size>0 ? predict() : null;
+  if(anchors.size>0) predict();
+  else { predicted=null; anomalies=[]; }
   render();
   updateMeta();
 }
@@ -179,18 +322,22 @@ function render(){
   const board=document.getElementById('board');
   board.innerHTML='';
   board.style.gridTemplateColumns='repeat('+COLS+', 20px)';
+  const m=revealed?coastMask():null;
   for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
     const cell=document.createElement('div');
     cell.className='cell';
     const key=r+','+c, t=truth[r][c];
     if(revealed){
       cell.classList.add(TILE_CLS[t]);
-      if(predicted && predicted[r][c]!==t) cell.classList.add('bad');
+      // only errors inside the scored coast band actually cost anything
+      if(predicted && predicted[r][c]!==t) cell.classList.add(m[r][c]?'bad':'miss');
     } else if(anchors.has(key)){
       cell.classList.add(TILE_CLS[t]);
       cell.classList.add('anchor');
+      if(isAnomaly(r,c)) cell.classList.add('anom');
     } else if(predicted){
       cell.classList.add('pred-'+TILE_CLS[predicted[r][c]]);
+      if(inPatch(r,c)) cell.classList.add('patch');
     }
     cell.addEventListener('click',()=>onClick(r,c));
     board.appendChild(cell);
@@ -199,21 +346,27 @@ function render(){
 
 function updateMeta(){
   const el=document.getElementById('meta');
-  el.textContent='Anchors: '+anchors.size+' / '+MAX_ANCHORS+'   ·   coast redraws live as you survey - click a cell to survey it, click again to remove';
+  const n=anomalies.length;
+  const note = n
+    ? '<b>'+n+' anomal'+(n===1?'y':'ies')+' detected</b> — the model has carved a local exception there'
+    : 'click a cell to survey it, click again to remove';
+  el.innerHTML='Anchors: <b>'+anchors.size+' / '+MAX_ANCHORS+'</b> &nbsp;·&nbsp; '+note;
 }
 
 function showScore(){
-  const a=coastlineScore();
-  const eff=1+(MAX_ANCHORS-anchors.size)*0.06;
-  const score=Math.round(a*eff*1000);
+  const d=scoreDetail();
   const el=document.getElementById('score');
   el.style.display='block';
-  el.innerHTML='Coastline <b>'+(a*100).toFixed(1)+'%</b> correct &nbsp;·&nbsp; anchor bonus ×'+eff.toFixed(2)+' &nbsp;·&nbsp; <span class="big">'+score+'</span> pts';
+  el.innerHTML='Coastline <b>'+(d.acc*100).toFixed(1)+'%</b> correct '+
+    '<span style="color:var(--muted)">(a blind guess scores '+(d.base*100).toFixed(1)+'%)</span><br>'+
+    'Survey value <b>'+(d.lift*100).toFixed(1)+'%</b> of what was there to learn'+
+    ' &nbsp;·&nbsp; anchor bonus ×'+d.eff.toFixed(2)+
+    ' &nbsp;·&nbsp; <span class="big">'+d.points+'</span> pts';
 }
 
 function initUI(){
   document.getElementById('reveal').addEventListener('click',()=>{ if(revealed) return; if(!predicted) predict(); revealed=true; render(); showScore(); });
-  document.getElementById('clear').addEventListener('click',()=>{ anchors=new Map(); predicted=null; revealed=false; render(); updateMeta(); const s=document.getElementById('score'); if(s) s.style.display='none'; });
+  document.getElementById('clear').addEventListener('click',()=>{ anchors=new Map(); predicted=null; anomalies=[]; revealed=false; render(); updateMeta(); const s=document.getElementById('score'); if(s) s.style.display='none'; });
   document.getElementById('new').addEventListener('click',()=>generate());
   generate();
 }
@@ -224,7 +377,9 @@ if(typeof document!=='undefined' && typeof window!=='undefined'){
 }
 
 if(typeof globalThis!=='undefined'){
-  globalThis.TideTable={generate,predict,coastlineScore,getTruth:()=>truth,getPredicted:()=>predicted,setAnchor:(r,c)=>{anchors.set(r+','+c,truth[r][c]);},clearAnchors:()=>{anchors=new Map();},ROWS,COLS,MAX_ANCHORS};
+  globalThis.TideTable={generate,predict,coastlineScore,baselineScore,scoreDetail,getTruth:()=>truth,getPredicted:()=>predicted,
+    getAnomalies:()=>anomalies,getTruthAnomalies:()=>truthAnomalies,setAnchor:(r,c)=>{anchors.set(r+','+c,truth[r][c]);},clearAnchors:()=>{anchors=new Map();anomalies=[];},
+    ROWS,COLS,MAX_ANCHORS,ANCHOR_COST};
 }
 </script>
 </body>
