@@ -54,9 +54,16 @@ Reporting it by sector rather than as one number is not a convenience. A single 
 
 - Only cells within 1 cell of any sand (the coastline band) count. Deep water and deep land are trivial.
 - Exact match = full, off-by-one-tier (water/sand or sand/land) = 0.4, wrong side (water/land) = 0.
+The score has two halves, because coastline accuracy alone barely moves when you find a lake — a lake is only ~20 cells of a 195-cell band, so a survey that solves the map and one that ignores the anomalies came out nearly level. They should not.
+
+**Coastline survey (40%).**
+
 - That raw percentage is then measured **against the blind guess** — the prediction the model would have made with no survey at all, which already scores ~62% on its own. `survey value = (yours − blind) / (1 − blind)`. An unsurveyed map is worth exactly 0.
-- Survey value is multiplied by an anchor-efficiency bonus: `1 + (12 - anchorsUsed) * 0.04`.
-- Final points = survey value x bonus x 1000.
+**Anomalies charted (60%).** How much of what the tide gauge counted your chart accounts for, with invented exceptions subtracted. This is the hunt, scored on its own terms.
+
+Both are blended, then multiplied by an anchor-efficiency bonus: `1 + (12 - anchorsUsed) * 0.04`. Final points = blended value x bonus x 1000.
+
+Note what the bonus can and cannot do. It multiplies every strategy by the same factor for the same spend, so **no value of it can rescue a strategy that is worse at equal spend** — and gauge-guided hunting was exactly that until the hunt term existed, losing to plain coastal sampling at 11 anchors. Tuning the bonus was never going to fix it; scoring the hunt was.
 
 Scoring the raw percentage instead makes the game degenerate: the blind guess scores ~62% for free, gains saturate around 70%, and the efficiency bonus then makes *placing no anchors at all* the optimal strategy. Measuring lift above the blind guess is what makes surveying worth doing.
 
@@ -76,9 +83,9 @@ Measured over 500 maps, against a player who walks the coast with 6 anchors and 
 |---|---|---|---|---|
 | no probing at all | 6.0 | 70.3 | 20.1% | 249 |
 | 6 blind probes | 12.0 | 71.7 | 24.0% | 240 |
-| gauge-guided probes | 10.9 | 72.2 | 25.3% | **263** |
+| gauge-guided probes | 10.9 | 72.2 | 25.3% | 263 |
 
-The gauge turns probing from a losing move into a winning one, and it beats blind probing outright at the same spend. But the gain over simply not probing is only about 6%: the efficiency bonus taxes away most of what the extra anchors buy. Probing pays only while `ANCHOR_COST` stays below about 0.055 — it is 0.04 today, so the hunt wins, but not by much. Making the hunt a genuinely exciting decision is now a balance problem, not an information problem.
+The gauge beats blind probing outright at the same spend. It did not, on its own, beat *not* probing — measured against coastal sampling at equal budget it still lost, because probes that miss teach you nothing while a coast anchor always improves the fit. That is what the hunt term in the scoring fixes: with it, hunting is the winning line by +18 points (95% CI ±16, paired over 800 maps).
 
 ## Repository contents
 
@@ -101,7 +108,7 @@ It runs the game headlessly over 200 fixed maps and asserts the balance properti
 
 See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
-- Rebalance the anchor economy now that hunting is targeted, so that finding an anomaly is clearly worth the anchors it costs rather than marginally worth them.
+- Raise the patch-fidelity ceiling. A patch centred on one off-centre anchor covers only part of its anomaly, so even perfect anchoring closes just ~36% of the gauge. That caps what the hunt can ever be worth.
 - Seeded daily coastlines and a spoiler-free share string.
 - Show the model's own uncertainty so the player can see where an anchor is worth spending.
 - Close the remaining gap in the smooth fit: 12 coast anchors reach 73%, but perfect knowledge of the coastline would reach 83%.
@@ -110,6 +117,7 @@ See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
 ## Changelog
 
+- **v5** - the hunt is scored: 60% of the score is now how much of the tide gauge your chart closes, so hunting anomalies beats grinding the coastline at the same budget (+18 pts, 95% CI ±16, paired over 800 maps). The gauge also corroborates the model - where the instrument reports something unexplained, one contradicting anchor is enough to carve an exception instead of two, lifting detection from 74% to 80%.
 - **v4** - the tide gauge: a free instrument that counts, per stretch of coast, the cells no smooth coastline can explain, so the anomaly hunt is directed rather than blind. Gauge-guided probing beats blind probing 263 points to 240.
 - **v3** - the model can be surprised: interval constraints, a robust leave-one-out fit that rejects contradicted anchors, local anomaly patches, survey-adaptive bandwidth, and baseline-relative scoring. Finding both anomalies with 6 anchors now beats a 12-anchor coastal survey.
 - **v2** - live preview: the predicted coast redraws automatically as anchors are placed or removed (the manual "Predict coastline" button was removed).
