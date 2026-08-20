@@ -11,6 +11,8 @@ Everything below is grounded in measurements from `test.mjs` and the tuning harn
 | 12 anchors walking the coast | 32.8% | 73.1 |
 | 6 coast anchors + both anomalies | 46.1% | 77.5 |
 | 6 coast anchors + gauge-guided probing (v4) | 25.3% | 72.2 |
+| 6 coast anchors + both anomalies, then a careful brush (v8) | — | 76.2 |
+| 6 coast anchors + both anomalies, then an overconfident brush (v8) | — | 71.7 |
 | perfect knowledge of the coastline, anomalies unknown | — | 83.4 (ceiling) |
 | perfect knowledge of everything | 100% | 100 |
 
@@ -108,13 +110,74 @@ Right now the truth appears instantly and a number changes. Stage it: the coastl
 
 ## Medium impact
 
-### 6. Commit before reveal
+### 6. Commit before reveal ✅ shipped in v8 — and it found a hole in the scoring
 
-The live preview means the player never actually commits — they watch a machine interpolate and then press a button. Add an explicit lock-in beat before the reveal. Better still, let them **paint over the model's guess** first: the model proposes, the player disposes. Scoring your own brushstrokes is a different emotion from scoring an algorithm's, and it makes the title verb ("predict") something the player does rather than something done for them.
+Play is now `survey → chart → reveal`. Locking the survey freezes the anchors and turns the model's coastline from a live readout into a proposal; the player paints over it with a three-tile brush and locks that in. Strokes are stored apart from the proposal, so a stroke that agrees with the model is not a stroke — which makes "paint nothing and score exactly what the model scored" exact, and testable.
 
-### 7. Instruments and a run structure
+The brush is a real decision in both directions. Paired over 400 maps on top of a survey that anchored every anomaly:
+
+| what the player paints | points vs not painting |
+|---|---|
+| a careful ring, radius 2, around each flagged anomaly | **+38 (95% CI ±6)** |
+| an overconfident ring, radius 3 | **−143 (±11)** |
+| the truth (the ceiling) | +643 (±15) |
+| nothing | 0, exactly |
+
+That spread is the point: the model's patch is good enough that timid painting gains little and greedy painting is punished, so the interesting play is judging *how far* your one anchor's evidence reaches.
+
+#### What painting exposed: the hunt term was counting, not looking
+
+Handing the player a brush turned a latent scoring flaw into the dominant strategy. The hunt term counted, per sector, how many cells your chart carved as exceptions against how many were hidden there — and never asked whether they were in the right place. So: spend nothing, lock in the blind guess, then paint exactly the number of cells the gauge reports into the sector it reports them in, at a row chosen with no information whatsoever.
+
+Paired over 800 maps, `HUNT_WEIGHT` 0.45 throughout:
+
+| strategy | counting hunt | positional hunt | counting pts | positional pts |
+|---|---|---|---|---|
+| survey the coast, anchor every anomaly | 53% | 57% | 486 | 505 |
+| grind 11 anchors along the coast | 60% | 24% | 457 | 306 |
+| paint the gauge's own reading, 0 anchors | 99% | 3% | **593** | 23 |
+
+The exploit beat honest play by **+106 points (95% CI ±18)**. And the second row shows the flaw was never really about painting: walking the coast carves ~48 exception cells incidentally, only half of them on a real anomaly, and the counting term paid for all of them — so the term written to reward hunting was scoring a pure grind *above* a survey that found everything.
+
+The hunt is now scored the way the coastline half already was: lift above the blind guess, same tiered credit, measured over the cells the anomalies actually occupy, minus 0.25 per invented exception cell (a measured cell can never count as invented). Candidates measured before settling on it:
+
+| definition | lazy | grind | honest | exploit |
+|---|---|---|---|---|
+| counting, per sector (v5–v7) | 0% | 60% | 53% | 99% |
+| positional, must carve *and* match, full penalty | 0% | 0% | 13% | 0% |
+| positional, tile match only, full penalty | 7% | 3% | 19% | 0% |
+| lift over the blind guess on the footprint, no invention penalty | 0% | 34% | 68% | 9% |
+| lift over the blind guess, penalty 0.5 | 0% | 14% | 40% | 1% |
+| **shipped: lift over the blind guess, penalty 0.25, charged only where the stroke is also wrong** | **0%** | **24%** | **57%** | **3%** |
+
+The full-penalty variants are unusable: every patch spills a sand fringe, so honest play scores 13%. Taking the penalty off entirely leaves the exploit worth 9%, about 60 points for nothing. At 0.25 the exploit is worth 23 points and the ordering `honest > grind > exploit > lazy` — which the counting term got backwards — holds.
+
+One detail in the last row earns its length. An exception is charged as invented only where the stroke is also *wrong*. Your smooth coast is an estimate of the true one, so a stroke that departs from it and lands on the truth is a coastline correction, not a phantom anomaly; charging those cost a pixel-perfect chart 0.165 of the hunt term and made painting the truth *lose* points on some maps. A cell you measured is excluded for the same reason.
+
+**`HUNT_WEIGHT` stays at 0.45.** It was re-swept from 0.35 to 0.75 after the change and no value rescues probing — the best it reaches is +14 (±14) at 0.65, still not significant (see 6b) — while moving it only takes score off the coastline, where v6 deliberately put it.
+
+The tide gauge itself stays a pure count, deliberately. A gauge that reported placement would hand the player, for free, the one thing anchors are for. The share string is written after the reveal and so does report placement.
+
+### 6b. Gauge-guided probing does not beat grinding — withdrawing the v5 claim
+
+v5 reported that scoring the hunt made gauge-guided probing the winning line by **+18 points (95% CI ±16)**. That margin was an artifact of the counting term: it paid grinding and probing alike for incidental exception cells, and happened to pay the prober a little more. Under the positional term, paired over 800 maps at an 11-anchor budget:
+
+| comparison | result |
+|---|---|
+| finding the anomalies vs grinding the coast | **+207 (95% CI ±14)** |
+| gauge-guided probing vs grinding the coast | −7 (±11) |
+
+So the design intent holds, and more strongly than before — *finding* anomalies is worth ~207 points against grinding, where the counting term scored the same comparison at +29. What does not hold is that *searching* pays. The cause is measured, not guessed: the gauge localises to a sector of 6 columns × 16 rows, an anomaly is ~13 cells, and the prober lands on a hidden cell **16% of the time** (218 hits in 1,335 probes) — barely better than a uniform draw inside the sector. A probe is worth about a sixth of a find, which is roughly what the anchor costs.
+
+Variants measured, none of which clear grinding: 4 coast + 7 probes (−10 ±13), 7 + 4 (−29 ±9), 7 + 4 with corroboration on a hit (−36 ±9), 9 + 3 (+1 ±7). Corroborating a hit makes it *worse*, because the second anchor is spent before the first is known to have landed.
+
+This is the anchor-bonus lesson from v5 in a new costume, and the same answer applies: **a global constant cannot rescue a strategy that is worse at equal spend.** The fix is a finer instrument — item 7's column sounding — which is now the highest-value item in this document.
+
+### 7. Instruments and a run structure — the column sounding is now the top item
 
 Five coastlines in a row with an escalating budget, unlocking tools as you go: single probe → column sounding → 3×3 sonar sweep (wide but blurred). Different information *shapes* create real decisions; a uniform anchor budget only creates a quantity decision.
+
+6b promoted the **column sounding** from a nice-to-have to the thing the economy is waiting on. A sounding that names the column but not the row would cut the search space from a 6×16 sector to a 1×16 strip — from a 16% hit rate to something near 80% — which is the difference between a probe being worth a sixth of a find and being worth most of one. Cost it against an anchor and the hunt becomes a real purchase rather than a lottery ticket. Measure the hit rate before tuning the price.
 
 ### 8. Par, not just points
 
@@ -124,10 +187,11 @@ The harness can run a reference bot over the current seed in milliseconds. Show 
 
 ## Lower priority, still worth doing
 
-- **Mobile/touch layout.** 30 × 20px cells = 600px; it is cramped and there is no touch affordance for "remove anchor".
+- **Mobile/touch layout.** 30 × 20px cells = 600px; it is cramped, there is no touch affordance for "remove anchor", and since v8 painting needs a drag that touch does not deliver.
 - **Difficulty curve.** Grid size, anchor budget, and coastline waviness are all single constants. Expose them as Calm / Standard / Broken Coast.
 - **WFC for anomaly generation.** The original plan, and it still fits: local adjacency is bad at reconstructing a smooth coast but genuinely good at growing plausible irregular blobs. Use it to plant features, not to predict them.
 - **High-score persistence** in `localStorage`, per difficulty.
+- **An undo stack for the brush.** There is a per-cell revert and a reset-all, but no step-back, and a mis-drag currently costs the whole stroke.
 
 ---
 
@@ -141,4 +205,7 @@ Honest accounting of what v3 did not fix:
 - **Vertical placement is the anchor's job and stays that way.** See 2b: the anchor's row is already accurate to 0.74 rows, better than any estimator built from the gauge, so the remaining centre-vs-edge gap is not recoverable from the information on hand.
 - **Scores are not comparable across maps.** A map hiding nothing is scored purely on coastline; a map hiding four is mostly a hunt. With dailies this matters less — everyone plays the same map — but a global leaderboard would need per-seed normalisation.
 - **The gauge's own reading can mislead in one direction.** A correct find whose patch is larger than the true anomaly reads as over-charted; the display only flags it past a 6-cell margin to avoid punishing good play, which means small phantom exceptions go unreported.
+- **The gauge now says less than the score knows, on purpose.** Since v8 the gauge counts and the score looks. A player can close every reading and still score badly on the hunt, because the gauge never claimed the exception was in the right place. This is the honest trade — a positional gauge would give away what anchors are for — but it is a real teaching problem, and the current mitigation is one line of label text.
+- **Searching for anomalies is break-even; only finding them pays.** See 6b. The gauge points at a sector too coarse to aim inside, so a probe hits 16% of the time. Until the column sounding exists, the strongest line of play is a good coastal survey plus luck, which is not the game this document is trying to build.
+- **Painting is a mouse gesture.** Strokes are drag-driven (`mousedown` + `mouseenter`), and drag does not work under touch, so on a phone the chart phase degrades to one click per cell. This is now the sharpest edge of the mobile problem below, not a separate one.
 - **`ANCHOR_COST` is tuned, not derived.** At 0.04 the efficiency bonus rewards a lean survey without making a zero-anchor run viable, but the whole curve shifts if the grid or budget changes.
