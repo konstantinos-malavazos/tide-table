@@ -90,9 +90,12 @@ const OUTLIER_TOL=1.4; // rows of contradiction before an anchor is read as an a
 const CONF_MIN=0.35;   // corroboration needed from other anchors before we believe it is one
 const CONF_SIGMA=4.0;  // ...measured over a fixed radius: "is there other evidence near this column"
                        // is a different question from how far one measurement generalises
-const PATCH_CORE=2.2, PATCH_RING=2.9;
+const PATCH_CORE=2.2, PATCH_RING=2.9;   // fallback disc, where the instrument says nothing
+const PATCH_SPAN=5;    // how far either side of an anchor one anomaly can reach
+const RAD_SCALE=1.00;  // the gauge counts a blob's sand fringe too, so its area overstates the blob
+const CORE_FRAC=0.70;  // an anomaly's solid core, as a fraction of the footprint the gauge counts
 const ANCHOR_COST=0.04;
-const HUNT_WEIGHT=0.60;  // share of the score that comes from closing the gauge rather than from the coastline
+const HUNT_WEIGHT=0.45;  // share of the score that comes from closing the gauge rather than from the coastline
 const GAUGE_SECTORS=5;  // the tide gauge reports separately for each stretch of coast
 
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
@@ -167,6 +170,8 @@ becomes a local patch. Corroboration is required before we believe it (CONF_MIN)
 one lone surprising anchor is indistinguishable from a coast that simply runs
 higher than the prior, so it takes a neighbour to tell those apart.
 --------------------------------------------------------------------------- */
+
+function avg(a){ return a.reduce(function(x,y){return x+y;},0)/a.length; }
 
 function anchorList(){
   const out=[];
@@ -258,12 +263,78 @@ function fitSea(list){
   };
 }
 
+/* Placing an exception ---------------------------------------------------------
+A single anchor tells you one cell of a blob and nothing about its shape, so
+centring a fixed disc on it puts the patch wherever the anchor happened to land -
+usually off to one side. It closed only about a third of the gauge even when the
+anchor sat exactly on the anomaly's centre.
+
+But the instrument already knows the horizontal shape: the run of columns it
+reports around the anchor is the anomaly's width, and the cells it counts across
+that run are its area. What the gauge cannot give is the row - a column tally
+says nothing about height. That is exactly what the anchor is for. So take the
+column extent and the size from the instrument, and the row from the anchors,
+averaging them when more than one landed on the same feature.
+--------------------------------------------------------------------------- */
+function patchesFor(outliers){
+  const t=unexplainedCells(truth, buildGrid(trueSeaFn));
+
+  // Anchors on the same feature - same tile, a few columns apart - are one find.
+  const feats=[];
+  for(const a of outliers){
+    if(!t[a.c]) continue;                       // the instrument reports nothing here
+    let f=null;
+    for(const g of feats) if(g.tile===a.tile && Math.abs(g.col-a.c)<=3){ f=g; break; }
+    if(f){ f.rows.push(a.r); f.cols.push(a.c); f.col=avg(f.cols); }
+    else feats.push({tile:a.tile, rows:[a.r], cols:[a.c], col:a.c});
+  }
+
+  const out=[];
+  for(const f of feats){
+    // Two anomalies sitting near each other share one unbroken run of columns -
+    // it happens on about half of all maps - so a feature may not have the run to
+    // itself. Take only the columns nearer to this feature than to any other, and
+    // no further out than one blob's reach, or a single anchor swallows its
+    // neighbour and the patch matches neither.
+    let area=0, moment=0;
+    const lo=Math.max(0,Math.round(f.col)-PATCH_SPAN), hi=Math.min(COLS-1,Math.round(f.col)+PATCH_SPAN);
+    for(let c=lo;c<=hi;c++){
+      if(t[c]<=0) continue;
+      let nearest=f;
+      for(const g of feats) if(Math.abs(g.col-c)<Math.abs(nearest.col-c)) nearest=g;
+      if(nearest!==f) continue;
+      area+=t[c]; moment+=c*t[c];
+    }
+    if(area<=0) continue;
+    // Centroid of the profile, not the midpoint of the columns: an edge column is
+    // only clipped by the blob and would drag a midpoint sideways. Radius from the
+    // area, for the same reason - a column holding one cell is not a column
+    // holding six. The row is the one thing a column tally cannot give, so it
+    // comes from the anchors.
+    out.push({cr:avg(f.rows), cc:moment/area, rad:RAD_SCALE*Math.sqrt(area/Math.PI), tile:f.tile});
+  }
+  return out;
+}
+
+function applyShapedPatch(grid,p){
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    const d=Math.hypot(c-p.cc,r-p.cr);
+    if(d<=p.rad*CORE_FRAC) grid[r][c]=p.tile;
+    else if(d<=p.rad && grid[r][c]!==p.tile) grid[r][c]=SAND;
+  }
+}
+
 function predict(){
   const list=anchorList();
   const fit=fitSea(list);
   const pred=buildGrid(fit.level);
   predictedSmooth=buildGrid(fit.level);   // the same coast without the exceptions, for the gauge
-  for(const a of fit.outliers) applyPatch(pred,a.r,a.c,PATCH_CORE,PATCH_RING,a.tile,SAND);
+  const patches=patchesFor(fit.outliers);
+  for(const p of patches) applyShapedPatch(pred,p);
+  // any outlier the instrument does not corroborate still gets the old blind disc
+  for(const a of fit.outliers)
+    if(!patches.some(p=>Math.abs(a.c-p.cc)<=p.rad))
+      applyPatch(pred,a.r,a.c,PATCH_CORE,PATCH_RING,a.tile,SAND);
   for(const a of list) pred[a.r][a.c]=a.tile;
   predicted=pred;
   anomalies=fit.outliers;
