@@ -15,7 +15,7 @@ globalThis.window = globalThis;
 new Function('window','document', src)(globalThis.window, globalThis.document);
 
 const TT = globalThis.TideTable;
-const { generate, predict, coastlineScore, scoreDetail, gauge, unexplainedCells, getTruth, getPredicted,
+const { generate, predict, coastlineScore, scoreDetail, huntScore, gauge, unexplainedCells, getTruth, getPredicted,
         getAnomalies, getTruthAnomalies, setAnchor, clearAnchors, ROWS, COLS, MAX_ANCHORS, GAUGE_SECTORS } = TT;
 
 // deterministic maps so the assertions below mean the same thing on every run
@@ -88,6 +88,70 @@ generate();
 const ladder=[2,4,6,8,10,12].map(n=>{ clearAnchors(); walkCoast(n); predict(); return coastlineScore(); });
 check('more coast anchors do not make the fit worse',
       ladder[ladder.length-1] >= ladder[0], ladder.map(x=>(x*100).toFixed(0)).join(' -> '));
+
+// --- the economy ----------------------------------------------------------
+// Hunting anomalies must be a viable line of play, not a trap: a lean survey
+// that goes looking should beat grinding out the coastline with the same budget.
+// Compared pairwise on identical maps, because map-to-map variance is far larger
+// than the effect and swamps an unpaired comparison.
+function huntRun(k,budget){
+  clearAnchors(); walkCoast(k); predict();
+  const used=new Set(); let spent=k;
+  while(spent<budget){
+    const hot=gauge().filter(g=>g.short>4).sort((a,b)=>b.short-a.short);
+    if(!hot.length) break;
+    const g=hot[0], pr=getPredicted(), mid=(g.from+g.to-1)/2, cand=[];
+    for(let c=g.from;c<g.to;c++) for(let r=1;r<ROWS-1;r++){
+      if(pr[r][c]===1||used.has(r+','+c)) continue;
+      let d=99; for(let rr=0;rr<ROWS;rr++) if(pr[rr][c]===1) d=Math.min(d,Math.abs(rr-r));
+      cand.push({r:r,c:c,key:Math.abs(d-3.5)+Math.abs(c-mid)*0.35});
+    }
+    if(!cand.length) break;
+    cand.sort((a,b)=>a.key-b.key);
+    used.add(cand[0].r+','+cand[0].c); setAnchor(cand[0].r,cand[0].c); predict(); spent++;
+  }
+  return spent;
+}
+const EN=800, dHunt=[], ptsLazy=[], ptsHunt=[], ptsGrind=[];
+for(let i=0;i<EN;i++){
+  generate();
+  huntRun(4,11);            const h=scoreDetail().points;
+  clearAnchors(); walkCoast(11); predict(); const g=scoreDetail().points;
+  clearAnchors(); predict(); ptsLazy.push(scoreDetail().points);
+  ptsHunt.push(h); ptsGrind.push(g); dHunt.push(h-g);
+}
+const md=mean(dHunt);
+const ci=1.96*Math.sqrt(dHunt.reduce((s,x)=>s+(x-md)*(x-md),0)/(dHunt.length-1))/Math.sqrt(dHunt.length);
+console.log('\npoints  lazy '+mean(ptsLazy).toFixed(0)+'   grind the coast '+mean(ptsGrind).toFixed(0)
+  +'   hunt with the gauge '+mean(ptsHunt).toFixed(0)
+  +'   (hunt - grind, paired: '+md.toFixed(0)+' +/- '+ci.toFixed(0)+')\n');
+
+check('doing nothing scores nothing', mean(ptsLazy)===0);
+check('hunting beats grinding the coast at the same budget', md-ci > 0,
+      '+'+md.toFixed(0)+' pts, 95% CI +/-'+ci.toFixed(0));
+check('the score is the declared blend of coastline and hunt', (()=>{
+  generate(); clearAnchors(); walkCoast(8); predict();
+  const d=scoreDetail();
+  return Math.abs(d.total-(0.40*d.lift+0.60*d.hunt))<1e-9;
+})());
+// averaged over maps rather than asserted per map: an individual patch can be
+// offset enough to only partly close its sector
+let hBefore=0, hAfter=0, hMaps=0;
+for(let i=0;i<120;i++){
+  generate();
+  if(!getTruthAnomalies().length) continue;
+  hMaps++;
+  clearAnchors(); predict(); hBefore+=huntScore();
+  clearAnchors(); walkCoast(6);
+  for(const a of getTruthAnomalies()) setAnchor(a.r,a.c);
+  predict(); hAfter+=huntScore();
+}
+check('an uncharted map closes none of the gauge', hBefore===0);
+// A patch centred on one off-centre anchor only ever covers part of its anomaly,
+// so even perfect anchoring closes about a third of the gauge. That ceiling caps
+// the hunt term; raising it is patch-fidelity work, not scoring work.
+check('charting the anomalies closes a real share of the gauge', hAfter/hMaps > 0.30,
+      (hAfter/hMaps*100).toFixed(0)+'% closed over '+hMaps+' maps');
 
 // --- the tide gauge -------------------------------------------------------
 // It must never mislead: it reads zero on an unsurveyed map only where nothing

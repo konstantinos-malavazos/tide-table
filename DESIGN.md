@@ -43,9 +43,15 @@ Result: gauge-guided probing scores **263** against **240** for blind probing an
 
 A **column sounding** that narrows the search to a single column without giving away the row remains worth building as a costed second instrument.
 
-### 1b. Rebalance the economy now that hunting is targeted — the new top priority
+### 1b. Score the hunt ✅ shipped in v5 — and the anchor bonus was the wrong lever
 
-Probing pays only while `ANCHOR_COST` stays below about **0.055**; it is 0.04 today, so hunting wins by ~6%. That is too thin for the game's central decision. Either lower the anchor cost, or make an anomaly find worth more than the +5.8 coastline points it currently returns — the anomalies corrupt 22% of the scored band, so a well-found one should be worth far more of that than it is. This is the single highest-value change on the list now, and unlike the gauge it is a tuning problem with a measurable target.
+This document previously called for retuning `ANCHOR_COST`. That cannot work, and the reason is worth writing down: the bonus multiplies every strategy by the same factor for the same spend, so **it can never rescue a strategy that is worse at equal spend**. Measured, gauge-guided hunting was exactly that — 24.4% survey value for 10.1 anchors against 29.3% for ten anchors spent walking the coast. Probes that miss teach you nothing, while a coast anchor always improves the fit. No value of the multiplier changes that ordering.
+
+What does work is paying for what the hunt actually achieves. 60% of the score is now how much of the tide gauge your chart closes, with invented exceptions subtracted. Hunting now beats grinding the coastline at the same budget by **+18 points (95% CI ±16, paired over 800 maps)**.
+
+The weight is tuned to a narrow window: below 0.55 hunting is not significantly better than grinding; above 0.60 a *perfect* hunt stops being the best available play, which would be worse than the problem. It sits at 0.60.
+
+The gauge also now corroborates the model directly. A lone surprising anchor normally needs a neighbour to agree before an exception is carved, because it could just be a coast running high — but where the instrument independently reports something unexplained, one anchor is enough. Detection rose from 74% to 80%, and false exceptions in clear sectors fell.
 
 ### 2. Don't tell the player how many anomalies there are
 
@@ -107,5 +113,6 @@ Honest accounting of what v3 did not fix:
 - **Detection is ~74%, not 100%.** An anomaly anchor near the edge of its blob barely contradicts the fit, so it is correctly not flagged — but the player has no way to tell a missed detection from a mis-click. When an anomaly anchor is *not* flagged it still costs about −1.3 points of accuracy, the old failure mode in miniature.
 - **The smooth fit reaches 73% against an 83% ceiling** with a full 12-anchor coastal survey. Sand localises the sea level only to ±0.9 rows, so there is an intrinsic floor, but not a 10-point one. A proper spline or a Gaussian-process fit with a periodic kernel would close much of it.
 - **The scored band is generous.** Off-by-one-tier still earns 0.4, which is why a blind guess scores 62%. Baseline-relative scoring papers over this; tightening the band would make the underlying numbers mean more.
+- **Patch fidelity caps the hunt.** A patch centred on one off-centre anchor covers only part of its anomaly, so even anchoring both anomaly centres exactly closes just ~36% of the gauge. Enlarging the patch makes it strictly worse (34% → 11% at radius 2.4, because over-charting is penalised). Raising that ceiling needs better patch *placement*, not size — and it is now the main thing limiting what a hunt can be worth.
 - **The gauge's own reading can mislead in one direction.** A correct find whose patch is larger than the true anomaly reads as over-charted; the display only flags it past a 6-cell margin to avoid punishing good play, which means small phantom exceptions go unreported.
 - **`ANCHOR_COST` is tuned, not derived.** At 0.04 the efficiency bonus rewards a lean survey without making a zero-anchor run viable, but the whole curve shifts if the grid or budget changes.
