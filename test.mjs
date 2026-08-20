@@ -15,8 +15,8 @@ globalThis.window = globalThis;
 new Function('window','document', src)(globalThis.window, globalThis.document);
 
 const TT = globalThis.TideTable;
-const { generate, predict, coastlineScore, scoreDetail, getTruth, getPredicted, getAnomalies,
-        getTruthAnomalies, setAnchor, clearAnchors, ROWS, COLS, MAX_ANCHORS } = TT;
+const { generate, predict, coastlineScore, scoreDetail, gauge, unexplainedCells, getTruth, getPredicted,
+        getAnomalies, getTruthAnomalies, setAnchor, clearAnchors, ROWS, COLS, MAX_ANCHORS, GAUGE_SECTORS } = TT;
 
 // deterministic maps so the assertions below mean the same thing on every run
 let _s = 20260820;
@@ -89,6 +89,53 @@ const ladder=[2,4,6,8,10,12].map(n=>{ clearAnchors(); walkCoast(n); predict(); r
 check('more coast anchors do not make the fit worse',
       ladder[ladder.length-1] >= ladder[0], ladder.map(x=>(x*100).toFixed(0)).join(' -> '));
 
+// --- the tide gauge -------------------------------------------------------
+// It must never mislead: it reads zero on an unsurveyed map only where nothing
+// is hidden, it localises what is hidden, and it closes once you find it.
+let gaugeTotalsMatch=0, gaugeLocalises=0, gaugeClosesOnFind=0, gaugeMaps=0;
+for(let i=0;i<N;i++){
+  generate();
+  const TA=getTruthAnomalies();
+  if(!TA.length) continue;
+  gaugeMaps++;
+
+  // with no survey at all, everything hidden is still outstanding
+  clearAnchors(); predict();
+  const before=gauge();
+  const outstanding=before.reduce((s,g)=>s+g.short,0);
+  if(outstanding>0) gaugeTotalsMatch++;
+
+  // every anomaly sits in a sector the gauge flags
+  const w=Math.ceil(COLS/GAUGE_SECTORS);
+  const flagged=new Set();
+  before.forEach(g=>{ if(g.short>0) for(let c=g.from;c<g.to;c++) flagged.add(c); });
+  if(TA.every(a=>flagged.has(a.c))) gaugeLocalises++;
+
+  // finding them closes the reading
+  clearAnchors(); walkCoast(6);
+  for(const a of TA) setAnchor(a.r,a.c);
+  predict();
+  const after=gauge().reduce((s,g)=>s+g.short,0);
+  if(after<outstanding) gaugeClosesOnFind++;
+}
+console.log('\ngauge: reads outstanding on '+(gaugeTotalsMatch/gaugeMaps*100).toFixed(0)
+  +'% of unsurveyed maps, localises every anomaly on '+(gaugeLocalises/gaugeMaps*100).toFixed(0)
+  +'%, closes when found on '+(gaugeClosesOnFind/gaugeMaps*100).toFixed(0)+'%\n');
+
+check('the gauge flags a hidden anomaly before any survey', gaugeTotalsMatch/gaugeMaps > 0.90,
+      (gaugeTotalsMatch/gaugeMaps*100).toFixed(0)+'% of maps');
+check('every anomaly lies in a sector the gauge flags', gaugeLocalises/gaugeMaps > 0.90,
+      (gaugeLocalises/gaugeMaps*100).toFixed(0)+'% of maps');
+check('finding the anomalies closes the gauge', gaugeClosesOnFind/gaugeMaps > 0.80,
+      (gaugeClosesOnFind/gaugeMaps*100).toFixed(0)+'% of maps');
+check('the gauge never invents anomalies on a smooth coast', (()=>{
+  // a grid compared against itself has nothing unexplained, wherever the coast sits
+  for(let i=0;i<20;i++){ generate();
+    const per=unexplainedCells(getTruth(),getTruth());
+    if(per.some(x=>x!==0)) return false; }
+  return true;
+})());
+
 generate(); clearAnchors(); walkCoast(8);
 for(const a of getTruthAnomalies()) setAnchor(a.r,a.c);
 predict();
@@ -97,4 +144,4 @@ console.log('\n--- PREDICTION ---\n'+ascii(getPredicted()));
 console.log('\nanomalies the model accepted: '+JSON.stringify(getAnomalies().map(a=>[a.r,a.c])));
 
 if(fails.length){ console.error('\n'+fails.length+' check(s) failed: '+fails.join(', ')); process.exit(1); }
-console.log('\nOK: '+ (6) +' checks passed.');
+console.log('\nOK: all checks passed.');

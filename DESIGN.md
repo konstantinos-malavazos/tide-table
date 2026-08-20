@@ -10,28 +10,42 @@ Everything below is grounded in measurements from `test.mjs` and the tuning harn
 | 6 anchors walking the coast | 18.9% | 67.5 |
 | 12 anchors walking the coast | 32.8% | 73.1 |
 | 6 coast anchors + both anomalies | 46.1% | 77.5 |
+| 6 coast anchors + gauge-guided probing (v4) | 25.3% | 72.2 |
 | perfect knowledge of the coastline, anomalies unknown | — | 83.4 (ceiling) |
 | perfect knowledge of everything | 100% | 100 |
 
 Two things this table says. First, the design intent now holds: **finding the anomalies with 8 anchors beats brute-forcing the coast with 12.** That is the decision the game is supposed to be about, and it finally pays. Second, there is still real headroom — 22% of the scored band is anomaly-corrupted, and the smooth fit gives up another 10 points against its own ceiling.
 
-## The central problem: the hunt is blind
+## The central problem was that the hunt was blind — v4 fixes the information, not the economy
 
-A random probe into the interior gains about **+1.5% per 2 anchors**. Anomalies occupy ~13 cells out of 480, so blind probing is a lottery. The player has no way to reason about where to look, which means the most interesting decision in the game is currently resolved by luck.
+A random probe into the interior gained about **+1.5% per 2 anchors**. Anomalies occupy ~13 cells out of 480, so blind probing was a lottery, and the most interesting decision in the game was resolved by luck.
 
-Everything in the "high impact" section below exists to fix that.
+### 1. A tide gauge — make the hunt deductive ✅ shipped in v4, with corrections
 
----
+**The spec in this document was wrong, twice over.** It called for showing the true total count of water cells and said it was "about three lines of code and the highest-value change on this list". Measured, it is neither.
 
-## High impact
+- A water tally is swamped by the error in the player's own coastline fit, which runs to **±30 cells** against an anomaly worth 20.
+- A lake adds water and a headland removes it, so across a map they **cancel**: median net contribution −2 cells.
+- Worse, a *global* reading — of any quantity — turns out to be worth nothing at all. It tells you something is out there but never where, so you still probe blind, and the reading almost never clears, so it fails even as a stopping rule. End to end it scored **245 points against 249 for not probing at all**.
 
-### 1. A tide gauge — make the hunt deductive
+What works, and what shipped: count the cells that **no smooth coastline can explain** — exactly the anomaly footprint, since everything else on the map is a smooth coast by construction — and report it **per sector** so it localises. That quantity is invariant to where the coastline sits, which is the property a water or sand tally lacks. Candidates measured along the way, for the record:
 
-Show the true total count of water cells (an instrument reading, not a spoiler). The player's live prediction has its own count. If the truth says 210 water cells and your prediction only accounts for 197, **there is a lake out there you have not found** — and you know roughly how big it is.
+| gauge | reads 0 on a complete survey? | usable? |
+|---|---|---|
+| water tally | no, ±30 noise | no — and the two anomaly types cancel |
+| sand tally | no, ±30 noise | no |
+| water runs per column | yes | misses headlands (51% / 20% discrimination) |
+| tile transitions | no, biased by coast waviness | no |
+| detached features (topological) | yes | patches often merge with the sea, so it will not clear |
+| **unexplained cells, by sector** | **yes** | **shipped** |
 
-This single readout converts blind probing into a search with a stopping rule, and it gives the endgame its tension: *do I spend my last two anchors hunting the discrepancy, or bank the efficiency bonus?* It is about three lines of code and it is the highest-value change on this list.
+Result: gauge-guided probing scores **263** against **240** for blind probing and **249** for not probing. It turns probing from a losing move into a winning one and beats blind probing outright — but only beats *not probing* by ~6%, because the efficiency bonus taxes away most of what the extra anchors buy. **The bottleneck has moved from information to economy** — see item 1b.
 
-A second instrument, a **column sounding** that reports how many water cells a given column contains, narrows the search to a column without giving away the row. Sell it at a higher anchor cost and you have a genuine tool economy.
+A **column sounding** that narrows the search to a single column without giving away the row remains worth building as a costed second instrument.
+
+### 1b. Rebalance the economy now that hunting is targeted — the new top priority
+
+Probing pays only while `ANCHOR_COST` stays below about **0.055**; it is 0.04 today, so hunting wins by ~6%. That is too thin for the game's central decision. Either lower the anchor cost, or make an anomaly find worth more than the +5.8 coastline points it currently returns — the anomalies corrupt 22% of the scored band, so a well-found one should be worth far more of that than it is. This is the single highest-value change on the list now, and unlike the gauge it is a tuning problem with a measurable target.
 
 ### 2. Don't tell the player how many anomalies there are
 
@@ -93,4 +107,5 @@ Honest accounting of what v3 did not fix:
 - **Detection is ~74%, not 100%.** An anomaly anchor near the edge of its blob barely contradicts the fit, so it is correctly not flagged — but the player has no way to tell a missed detection from a mis-click. When an anomaly anchor is *not* flagged it still costs about −1.3 points of accuracy, the old failure mode in miniature.
 - **The smooth fit reaches 73% against an 83% ceiling** with a full 12-anchor coastal survey. Sand localises the sea level only to ±0.9 rows, so there is an intrinsic floor, but not a 10-point one. A proper spline or a Gaussian-process fit with a periodic kernel would close much of it.
 - **The scored band is generous.** Off-by-one-tier still earns 0.4, which is why a blind guess scores 62%. Baseline-relative scoring papers over this; tightening the band would make the underlying numbers mean more.
+- **The gauge's own reading can mislead in one direction.** A correct find whose patch is larger than the true anomaly reads as over-charted; the display only flags it past a 6-cell margin to avoid punishing good play, which means small phantom exceptions go unreported.
 - **`ANCHOR_COST` is tuned, not derived.** At 0.04 the efficiency bonus rewards a lean survey without making a zero-anchor run viable, but the whole curve shifts if the grid or budget changes.

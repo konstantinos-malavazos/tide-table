@@ -23,6 +23,7 @@ The anomalies exist specifically because a smooth coastline model cannot see the
 Open `index.html` in any browser, or use the [hosted link](https://raw.githack.com/konstantinos-malavazos/tide-table/main/index.html). No build step, no dependencies.
 
 - Click cells to drop survey anchors (up to 12). Click a cell again to remove its anchor. The predicted coast redraws live as you survey.
+- Read the **tide gauge** under the board before you spend anything. It costs nothing, and it tells you which stretch of coast still hides something — and how much of it — but never where in that stretch. An amber segment means there is something there you have not found; a red one means your chart has invented an exception that is not there, and you should pull the anchor that caused it.
 - If an anchor contradicts everything around it, the model marks it with a dashed purple ring and carves a **local exception** there instead of bending the whole coastline to reach it.
 - **Reveal truth** shows the real coast and scores you. Red outlines mark cells you got wrong inside the scored band; faint dotted outlines mark errors outside it, which cost nothing.
 - **New coastline** generates a fresh map with 2 hidden anomalies.
@@ -36,6 +37,18 @@ Open `index.html` in any browser, or use the [hosted link](https://raw.githack.c
 - **Bandwidth follows the survey.** With few anchors only a broad, smooth coast is justified; once you have sampled densely the model stops blurring away the detail you paid for.
 - **Anomalies are outliers, not evidence.** Each anchor is re-checked against the consensus of *all the others* (leave-one-out). An anchor the rest of the evidence contradicts is dropped from the curve entirely and becomes a local patch of its own tile. Corroboration is required first: a lone surprising anchor is not enough, because with no neighbours it cannot be told apart from a coast that simply runs high.
 - Anchored cells are pinned to their true tile.
+- **The tide gauge** counts, for each of 5 stretches of coast, the cells that no smooth coastline can account for — which is exactly the anomaly footprint, since everything else on the map is a smooth coast by construction. Your side of the reading is the same measurement taken against your own fit: how many cells your chart explains with a carved exception rather than with the coastline. The difference is what you have left to find.
+
+### Why the gauge measures that, and not water
+
+The obvious instrument is a water tally: count the sea, notice a shortfall, deduce a lake. It does not work, for two independent reasons, both measured:
+
+- The error in your own coastline fit runs to **±30 cells**, and an anomaly is worth about 20. The signal is drowned by the noise in the thing you are comparing against.
+- A lake adds water and a headland removes it, so across a whole map they **cancel**: the median net water contribution of both anomalies together is −2 cells.
+
+A sand tally fails the same way (±30 noise). Counting tile transitions is sensitive but biased, because a wiggly true coast has more transitions than any smoothed fit, so it reads nonzero even on a perfect survey. Counting cells a smooth coast cannot explain is invariant to where your coastline sits, which is the property that matters.
+
+Reporting it by sector rather than as one number is not a convenience. A single global reading tells you something is out there but never where, which leaves you probing blind — and blind probing is worth so little that the anchors it costs beat the anchors it saves. Measured end to end, the global version scores **245 points against 249 for not probing at all**: strictly worse than ignoring it.
 
 ## Scoring
 
@@ -54,6 +67,18 @@ The first pass used literal wave-function-collapse for the predictor. WFC's loca
 That smooth model had a deeper problem, though. `sea level` was a function of column alone, so it could not represent water surrounded by land *at any parameter setting*. Anchoring a lake was read as "the sea is very high in this column", which dragged the genuine coastline wrong for ten columns either side: you won one pinned cell and lost a dozen. Measured over 600 maps, spending an anchor on a lake **cost** 2.2 points of accuracy. The game punished the exact behaviour its own README told you to attempt.
 
 v3 splits the model in two — a robust global curve plus local exceptions — so that a contradicted measurement stops being a bad datum about the coastline and becomes a good datum about something else. Anomaly detection now runs at ~74%, and a detected anomaly is worth about +5.8 points of coastline accuracy.
+
+## What the gauge is worth
+
+Measured over 500 maps, against a player who walks the coast with 6 anchors and then probes:
+
+| strategy | anchors | coastline % | survey value | points |
+|---|---|---|---|---|
+| no probing at all | 6.0 | 70.3 | 20.1% | 249 |
+| 6 blind probes | 12.0 | 71.7 | 24.0% | 240 |
+| gauge-guided probes | 10.9 | 72.2 | 25.3% | **263** |
+
+The gauge turns probing from a losing move into a winning one, and it beats blind probing outright at the same spend. But the gain over simply not probing is only about 6%: the efficiency bonus taxes away most of what the extra anchors buy. Probing pays only while `ANCHOR_COST` stays below about 0.055 — it is 0.04 today, so the hunt wins, but not by much. Making the hunt a genuinely exciting decision is now a balance problem, not an information problem.
 
 ## Repository contents
 
@@ -76,7 +101,7 @@ It runs the game headlessly over 200 fixed maps and asserts the balance properti
 
 See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
-- Make the anomaly hunt **deductive rather than blind** — a global tide gauge that tells you how much water exists, so a shortfall proves a lake is still out there. Blind probing currently gains ~1.5% per 2 anchors, which is close to worthless.
+- Rebalance the anchor economy now that hunting is targeted, so that finding an anomaly is clearly worth the anchors it costs rather than marginally worth them.
 - Seeded daily coastlines and a spoiler-free share string.
 - Show the model's own uncertainty so the player can see where an anchor is worth spending.
 - Close the remaining gap in the smooth fit: 12 coast anchors reach 73%, but perfect knowledge of the coastline would reach 83%.
@@ -85,6 +110,7 @@ See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
 ## Changelog
 
+- **v4** - the tide gauge: a free instrument that counts, per stretch of coast, the cells no smooth coastline can explain, so the anomaly hunt is directed rather than blind. Gauge-guided probing beats blind probing 263 points to 240.
 - **v3** - the model can be surprised: interval constraints, a robust leave-one-out fit that rejects contradicted anchors, local anomaly patches, survey-adaptive bandwidth, and baseline-relative scoring. Finding both anomalies with 6 anchors now beats a 12-anchor coastal survey.
 - **v2** - live preview: the predicted coast redraws automatically as anchors are placed or removed (the manual "Predict coastline" button was removed).
 - **v1** - initial prototype with a manual "Predict coastline" button.
