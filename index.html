@@ -16,7 +16,7 @@
   h1{font-family:Georgia,'Times New Roman',serif;font-weight:600;font-size:27px;margin:0;letter-spacing:.5px}
   .sub{color:var(--muted);font-size:13px;margin:5px 0 16px;text-align:center;max-width:620px;line-height:1.45}
   .wrap{overflow:auto;max-width:100%}
-  #board{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;user-select:none;-webkit-user-select:none}
+  #board{display:grid;gap:1px;width:max-content;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;user-select:none;-webkit-user-select:none}
   .cell{width:20px;height:20px;background:var(--blank);cursor:pointer;position:relative;transition:background .1s}
   .cell:hover{outline:2px solid rgba(0,0,0,.18);outline-offset:-2px}
   .cell.w{background:var(--water)} .cell.s{background:var(--sand)} .cell.l{background:var(--land)}
@@ -26,6 +26,15 @@
   .cell.patch{box-shadow:inset 0 0 0 1px rgba(142,68,173,.35)}
   .cell.bad{outline:2px solid #d64545;outline-offset:-2px;z-index:1}
   .cell.miss{outline:2px dotted rgba(214,69,69,.4);outline-offset:-2px}
+  #gauge{display:grid;gap:1px;margin-top:8px;width:max-content}
+  .gseg{background:#fff;border:1px solid var(--line);border-radius:5px;padding:5px 2px;text-align:center}
+  .gbig{font-size:17px;font-weight:700;line-height:1.15}
+  .gsub{font-size:9.5px;color:var(--muted);letter-spacing:.3px}
+  .g-open{border-color:#c9a23f;background:#fdf8e8} .g-open .gbig{color:#a97d12}
+  .g-done{border-color:#7fa87c;background:#f0f6ef} .g-done .gbig{color:#4d7a4a}
+  .g-over{border-color:#d08b8b;background:#fbf0f0} .g-over .gbig{color:#b04a4a}
+  .g-empty .gbig{color:#c2cdd4}
+  .glabel{color:var(--muted);font-size:11px;text-align:center;margin-top:6px;line-height:1.5;max-width:620px}
   .bar{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin:16px 0 6px}
   button{font:inherit;font-size:14px;padding:8px 14px;border-radius:6px;border:1px solid #b9c6cf;background:#fff;color:var(--ink);cursor:pointer}
   button:hover{background:#eef3f6}
@@ -42,8 +51,12 @@
 </head>
 <body>
   <h1>Tide Table</h1>
-  <div class="sub">Predict the coastline. Click cells to drop survey anchors (each reveals the true tile there) and the predicted coast redraws live as you survey. Reveal the truth to see how close you land. Fewer anchors = bigger bonus. Watch for surprises: lakes and headlands that break the smooth model — corroborate one with a nearby anchor and the model will carve out an exception for it.</div>
-  <div class="wrap"><div id="board"></div></div>
+  <div class="sub">Predict the coastline. Click cells to drop survey anchors (each reveals the true tile there) and the predicted coast redraws live as you survey. Reveal the truth to see how close you land. Fewer anchors = bigger bonus. Watch for surprises: lakes and headlands that break the smooth model — corroborate one with a nearby anchor and the model will carve out an exception for it. The tide gauge below the board tells you which stretch of coast still hides something, but never where in it.</div>
+  <div class="wrap">
+    <div id="board"></div>
+    <div id="gauge"></div>
+  </div>
+  <div class="glabel">Tide gauge — cells along each stretch of coast that no smooth coastline can explain.<br>Amber: still unfound. Red: your chart invents an exception that is not there.</div>
   <div class="bar">
     <button id="reveal" class="primary">Reveal truth</button>
     <button id="clear">Clear anchors</button>
@@ -79,12 +92,13 @@ const CONF_SIGMA=4.0;  // ...measured over a fixed radius: "is there other evide
                        // is a different question from how far one measurement generalises
 const PATCH_CORE=2.2, PATCH_RING=2.9;
 const ANCHOR_COST=0.04;
+const GAUGE_SECTORS=5;  // the tide gauge reports separately for each stretch of coast
 
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 
 let seed=0, rng=mulberry32(seed);
 let trueSeaFn=null;
-let truth=[], truthAnomalies=[], anchors=new Map(), predicted=null, anomalies=[], revealed=false;
+let truth=[], truthAnomalies=[], anchors=new Map(), predicted=null, predictedSmooth=null, anomalies=[], revealed=false;
 
 function generate(){
   seed=(Math.random()*1e9)|0;
@@ -95,10 +109,12 @@ function generate(){
   plantAnomalies();
   anchors=new Map();
   predicted=null;
+  predictedSmooth=null;
   anomalies=[];
   revealed=false;
   render();
   updateMeta();
+  renderGauge();
   const s=document.getElementById('score'); if(s) s.style.display='none';
 }
 
@@ -239,6 +255,7 @@ function predict(){
   const list=anchorList();
   const fit=fitSea(list);
   const pred=buildGrid(fit.level);
+  predictedSmooth=buildGrid(fit.level);   // the same coast without the exceptions, for the gauge
   for(const a of fit.outliers) applyPatch(pred,a.r,a.c,PATCH_CORE,PATCH_RING,a.tile,SAND);
   for(const a of list) pred[a.r][a.c]=a.tile;
   predicted=pred;
@@ -254,6 +271,47 @@ function isAnomaly(r,c){
 function inPatch(r,c){
   for(const a of anomalies) if(Math.hypot(c-a.c,r-a.r)<=PATCH_RING) return true;
   return false;
+}
+
+/* ---- the tide gauge ---------------------------------------------------------
+A survey instrument, not an anchor: it costs nothing and is readable from the
+start. It counts the cells a smooth coastline cannot account for - which is
+exactly the anomaly footprint, and nothing else, because everything else on the
+map is a smooth coast by construction. Your side of the reading is the same
+measurement taken against your own fit: how many cells your chart explains with
+a carved exception rather than with the coastline.
+
+Measuring it this way matters. A water or sand tally would be swamped by the
+error in your own coastline fit, which runs to +/-30 cells and drowns an anomaly
+worth 20; this quantity is invariant to where your coast sits.
+
+It reports by sector rather than as one number. A single total tells you that
+something is out there but never where, which leaves you probing blind - and
+blind probing is worth so little that the anchors it costs beat the anchors it
+saves.
+--------------------------------------------------------------------------- */
+
+// per column, how many cells this grid holds that its own smooth coast does not explain
+function unexplainedCells(grid,smooth){
+  const per=new Array(COLS).fill(0);
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++)
+    if(grid[r][c]!==smooth[r][c]) per[c]++;
+  return per;
+}
+
+// what the gauge shows: per sector, what the survey counted against what your chart accounts for
+function gauge(){
+  const t=unexplainedCells(truth, buildGrid(trueSeaFn));
+  const p=(predicted&&predictedSmooth) ? unexplainedCells(predicted,predictedSmooth) : new Array(COLS).fill(0);
+  const w=Math.ceil(COLS/GAUGE_SECTORS), out=[];
+  for(let s=0;s<GAUGE_SECTORS;s++){
+    const from=s*w, to=Math.min(COLS,(s+1)*w);
+    if(from>=to) continue;
+    let surveyed=0, charted=0;
+    for(let c=from;c<to;c++){ surveyed+=t[c]; charted+=p[c]; }
+    out.push({from:from,to:to,surveyed:surveyed,charted:charted,short:Math.max(0,surveyed-charted)});
+  }
+  return out;
 }
 
 function coastMask(){
@@ -313,9 +371,10 @@ function onClick(r,c){
   else if(anchors.size<MAX_ANCHORS) anchors.set(key,truth[r][c]);
   else return;
   if(anchors.size>0) predict();
-  else { predicted=null; anomalies=[]; }
+  else { predicted=null; predictedSmooth=null; anomalies=[]; }
   render();
   updateMeta();
+  renderGauge();
 }
 
 function render(){
@@ -344,6 +403,22 @@ function render(){
   }
 }
 
+function renderGauge(){
+  const el=document.getElementById('gauge');
+  if(!el) return;
+  const g=gauge();
+  el.style.gridTemplateColumns=g.map(function(x){return ((x.to-x.from)*21)+'px';}).join(' ');
+  el.innerHTML=g.map(function(x){
+    const over=x.charted-x.surveyed;
+    let cls,big,sub;
+    if(x.short>0){ cls='g-open'; big=x.short; sub='of '+x.surveyed+' unfound'; }
+    else if(over>6){ cls='g-over'; big='+'+over; sub='charted, not there'; }
+    else if(x.surveyed===0){ cls='g-empty'; big='--'; sub='clear'; }
+    else { cls='g-done'; big='\u2713'; sub=x.surveyed+' accounted for'; }
+    return '<div class="gseg '+cls+'"><div class="gbig">'+big+'</div><div class="gsub">'+sub+'</div></div>';
+  }).join('');
+}
+
 function updateMeta(){
   const el=document.getElementById('meta');
   const n=anomalies.length;
@@ -366,7 +441,7 @@ function showScore(){
 
 function initUI(){
   document.getElementById('reveal').addEventListener('click',()=>{ if(revealed) return; if(!predicted) predict(); revealed=true; render(); showScore(); });
-  document.getElementById('clear').addEventListener('click',()=>{ anchors=new Map(); predicted=null; anomalies=[]; revealed=false; render(); updateMeta(); const s=document.getElementById('score'); if(s) s.style.display='none'; });
+  document.getElementById('clear').addEventListener('click',()=>{ anchors=new Map(); predicted=null; predictedSmooth=null; anomalies=[]; revealed=false; render(); updateMeta(); renderGauge(); const s=document.getElementById('score'); if(s) s.style.display='none'; });
   document.getElementById('new').addEventListener('click',()=>generate());
   generate();
 }
@@ -377,9 +452,9 @@ if(typeof document!=='undefined' && typeof window!=='undefined'){
 }
 
 if(typeof globalThis!=='undefined'){
-  globalThis.TideTable={generate,predict,coastlineScore,baselineScore,scoreDetail,getTruth:()=>truth,getPredicted:()=>predicted,
+  globalThis.TideTable={generate,predict,coastlineScore,baselineScore,scoreDetail,gauge,unexplainedCells,getTruth:()=>truth,getPredicted:()=>predicted,
     getAnomalies:()=>anomalies,getTruthAnomalies:()=>truthAnomalies,setAnchor:(r,c)=>{anchors.set(r+','+c,truth[r][c]);},clearAnchors:()=>{anchors=new Map();anomalies=[];},
-    ROWS,COLS,MAX_ANCHORS,ANCHOR_COST};
+    ROWS,COLS,MAX_ANCHORS,ANCHOR_COST,GAUGE_SECTORS};
 }
 </script>
 </body>
