@@ -15,7 +15,7 @@ globalThis.window = globalThis;
 new Function('window','document', src)(globalThis.window, globalThis.document);
 
 const TT = globalThis.TideTable;
-const { generate, predict, coastlineScore, scoreDetail, huntScore, gauge, unexplainedCells, getTruth, getPredicted,
+const { generate, predict, coastlineScore, scoreDetail, huntScore, gauge, unexplainedCells, dailySeed, shareText, getSeed, getSupport, getTruth, getPredicted,
         getAnomalies, getTruthAnomalies, setAnchor, clearAnchors, ROWS, COLS, MAX_ANCHORS, GAUGE_SECTORS } = TT;
 
 // deterministic maps so the assertions below mean the same thing on every run
@@ -132,7 +132,7 @@ check('hunting beats grinding the coast at the same budget', md-ci > 0,
 check('the score is the declared blend of coastline and hunt', (()=>{
   generate(); clearAnchors(); walkCoast(8); predict();
   const d=scoreDetail();
-  return Math.abs(d.total-(0.55*d.lift+0.45*d.hunt))<1e-9;
+  return d.hunt===null ? Math.abs(d.total-d.lift)<1e-9 : Math.abs(d.total-(0.55*d.lift+0.45*d.hunt))<1e-9;
 })());
 // averaged over maps rather than asserted per map: an individual patch can be
 // offset enough to only partly close its sector
@@ -141,10 +141,10 @@ for(let i=0;i<120;i++){
   generate();
   if(!getTruthAnomalies().length) continue;
   hMaps++;
-  clearAnchors(); predict(); hBefore+=huntScore();
+  clearAnchors(); predict(); hBefore+=huntScore()||0;
   clearAnchors(); walkCoast(6);
   for(const a of getTruthAnomalies()) setAnchor(a.r,a.c);
-  predict(); hAfter+=huntScore();
+  predict(); hAfter+=huntScore()||0;
 }
 check('an uncharted map closes none of the gauge', hBefore===0);
 // Patches are placed from the gauge's own column profile, so how far off-centre
@@ -152,6 +152,45 @@ check('an uncharted map closes none of the gauge', hBefore===0);
 // row, which a column tally cannot give and the anchor must supply.
 check('charting the anomalies closes most of the gauge', hAfter/hMaps > 0.45,
       (hAfter/hMaps*100).toFixed(0)+'% closed over '+hMaps+' maps');
+
+// --- seeds, hidden counts, uncertainty ------------------------------------
+check('the same seed always gives the same coastline', (()=>{
+  generate(4242); const a=JSON.stringify(getTruth());
+  generate(999);
+  generate(4242); return JSON.stringify(getTruth())===a && getSeed()===4242;
+})());
+check('different seeds give different coastlines', (()=>{
+  generate(1); const a=JSON.stringify(getTruth());
+  generate(2); return JSON.stringify(getTruth())!==a;
+})());
+check('the daily seed is stable within a day', dailySeed()===dailySeed());
+check('the anomaly count varies and is sometimes zero', (()=>{
+  const seen=new Set();
+  for(let i=0;i<400;i++){ generate(); seen.add(getTruthAnomalies().length); }
+  return seen.has(0) && seen.size>=4;
+})());
+check('a map hiding nothing is scored on the coastline alone', (()=>{
+  for(let i=0;i<400;i++){
+    generate();
+    if(getTruthAnomalies().length) continue;
+    clearAnchors(); walkCoast(6); predict();
+    const d=scoreDetail();
+    return d.hunt===null && Math.abs(d.total-d.lift)<1e-9;
+  }
+  return false;
+})());
+check('the share string leaks no positions', (()=>{
+  generate(4242); clearAnchors(); walkCoast(6); predict();
+  const s=shareText();
+  return s.indexOf('Tide Table')===0 && !/\d+\s*,\s*\d+/.test(s);
+})());
+check('unsurveyed columns are marked as guesswork', (()=>{
+  generate(4242); clearAnchors();
+  for(let r=0;r<ROWS;r++) if(getTruth()[r][1]===1){ setAnchor(r,1); break; }
+  predict();
+  const sup=getSupport();
+  return sup[1] > sup[COLS-1] && sup[COLS-1] < 0.45;
+})());
 
 // --- the tide gauge -------------------------------------------------------
 // It must never mislead: it reads zero on an unsurveyed map only where nothing
