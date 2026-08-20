@@ -53,6 +53,17 @@ The weight is tuned to a narrow window: below 0.55 hunting is not significantly 
 
 The gauge also now corroborates the model directly. A lone surprising anchor normally needs a neighbour to agree before an exception is carved, because it could just be a coast running high — but where the instrument independently reports something unexplained, one anchor is enough. Detection rose from 74% to 80%, and false exceptions in clear sectors fell.
 
+### 1c. Place exceptions from the instrument ✅ shipped in v6
+
+A patch centred on the anchor put itself wherever the anchor happened to land, which closed only ~36% of the gauge even when the anchor sat exactly on an anomaly's centre. Enlarging it was strictly worse (34% → 11% at radius 2.4, since over-charting is penalised) — the problem was placement, not size.
+
+The gauge already knows the horizontal shape, so the patch now takes its column from the profile's centroid and its radius from the area, and only the row from the anchor. Two details mattered more than the geometry:
+
+- **Centroid, not midpoint; area, not width.** A run's edge column is only clipped by the blob, and a column holding one cell is not a column holding six. Using the midpoint and the span cost about 3 points of coastline accuracy.
+- **Split merged runs.** On ~47% of maps both anomalies share one unbroken run of columns. Swallowing both into one blob puts a patch between them that matches neither; grouping anchors into features and giving each only the columns nearer to it fixes it.
+
+Result: closure 36% → 52%, and 32% → 52% for the realistic case of anchoring off centre. Because the hunt term now earns more, `HUNT_WEIGHT` came *down* from 0.60 to 0.45 while the margin over grinding stayed significant (+21 pts, 95% CI ±14) — leaving more of the score on the coastline, which is the better place for it.
+
 ### 2. Don't tell the player how many anomalies there are
 
 Currently it is always exactly 2, and the README says so. Randomise it 0–4 and keep it secret. Combined with the tide gauge, "is there a third one?" becomes the question the whole endgame turns on. Right now the player just counts to two and stops.
@@ -113,6 +124,6 @@ Honest accounting of what v3 did not fix:
 - **Detection is ~74%, not 100%.** An anomaly anchor near the edge of its blob barely contradicts the fit, so it is correctly not flagged — but the player has no way to tell a missed detection from a mis-click. When an anomaly anchor is *not* flagged it still costs about −1.3 points of accuracy, the old failure mode in miniature.
 - **The smooth fit reaches 73% against an 83% ceiling** with a full 12-anchor coastal survey. Sand localises the sea level only to ±0.9 rows, so there is an intrinsic floor, but not a 10-point one. A proper spline or a Gaussian-process fit with a periodic kernel would close much of it.
 - **The scored band is generous.** Off-by-one-tier still earns 0.4, which is why a blind guess scores 62%. Baseline-relative scoring papers over this; tightening the band would make the underlying numbers mean more.
-- **Patch fidelity caps the hunt.** A patch centred on one off-centre anchor covers only part of its anomaly, so even anchoring both anomaly centres exactly closes just ~36% of the gauge. Enlarging the patch makes it strictly worse (34% → 11% at radius 2.4, because over-charting is penalised). Raising that ceiling needs better patch *placement*, not size — and it is now the main thing limiting what a hunt can be worth.
+- **Vertical placement is still the anchor's job, and that shows.** Patches now take their column and size from the gauge, so horizontal placement is exact — closure is identical (52%) whether you anchor an anomaly's centre or its edge. The row cannot come from a column tally, so it comes from the anchor, and that still matters: anchoring dead centre is worth 6.6 coastline points against 3.6 for anchoring anywhere in the blob. Fixing it needs a second instrument that reports by row, or an inference from the constraint that a lake must sit clear of the coast band.
 - **The gauge's own reading can mislead in one direction.** A correct find whose patch is larger than the true anomaly reads as over-charted; the display only flags it past a 6-cell margin to avoid punishing good play, which means small phantom exceptions go unreported.
 - **`ANCHOR_COST` is tuned, not derived.** At 0.04 the efficiency bonus rewards a lean survey without making a zero-anchor run viable, but the whole curve shifts if the grid or budget changes.

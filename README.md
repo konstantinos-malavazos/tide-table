@@ -35,6 +35,7 @@ Open `index.html` in any browser, or use the [hosted link](https://raw.githack.c
 - **Every anchor is an interval constraint** on the sea level in its column — the exact inverse of the threshold that built the grid. Sand at row `r` means the sea level is within `±0.9` of `r`; water at row `r` only means the coast is somewhere above `r - 0.9`; land at row `r` only means it is somewhere below `r + 0.9`. Deep water and deep land are therefore nearly uninformative, which is as it should be.
 - **The global curve is fit robustly** by local linear regression, weighted by horizontal distance. Sand pulls the fit to its row; water and land act purely as barriers and say nothing while the fit already satisfies them.
 - **Bandwidth follows the survey.** With few anchors only a broad, smooth coast is justified; once you have sampled densely the model stops blurring away the detail you paid for.
+- **Exceptions are placed from the gauge, not from the anchor.** A single anchor tells you one cell of a blob and nothing about its shape, so centring a fixed disc on it puts the patch wherever the anchor happened to land. The instrument already knows the horizontal shape: the run of columns it reports is the anomaly's width and the cells it counts there are its area, so the patch takes its column and size from the profile's centroid. What a column tally cannot give is the row — that is what the anchor is for, averaged when several land on the same feature. Where two anomalies share one unbroken run of columns, which happens on about half of all maps, the profile is split between them rather than swallowed into one blob that matches neither.
 - **Anomalies are outliers, not evidence.** Each anchor is re-checked against the consensus of *all the others* (leave-one-out). An anchor the rest of the evidence contradicts is dropped from the curve entirely and becomes a local patch of its own tile. Corroboration is required first: a lone surprising anchor is not enough, because with no neighbours it cannot be told apart from a coast that simply runs high.
 - Anchored cells are pinned to their true tile.
 - **The tide gauge** counts, for each of 5 stretches of coast, the cells that no smooth coastline can account for — which is exactly the anomaly footprint, since everything else on the map is a smooth coast by construction. Your side of the reading is the same measurement taken against your own fit: how many cells your chart explains with a carved exception rather than with the coastline. The difference is what you have left to find.
@@ -54,12 +55,12 @@ Reporting it by sector rather than as one number is not a convenience. A single 
 
 - Only cells within 1 cell of any sand (the coastline band) count. Deep water and deep land are trivial.
 - Exact match = full, off-by-one-tier (water/sand or sand/land) = 0.4, wrong side (water/land) = 0.
-The score has two halves, because coastline accuracy alone barely moves when you find a lake — a lake is only ~20 cells of a 195-cell band, so a survey that solves the map and one that ignores the anomalies came out nearly level. They should not.
+The score has two halves (55% coastline, 45% hunt), because coastline accuracy alone barely moves when you find a lake — a lake is only ~20 cells of a 195-cell band, so a survey that solves the map and one that ignores the anomalies came out nearly level. They should not.
 
 **Coastline survey (40%).**
 
 - That raw percentage is then measured **against the blind guess** — the prediction the model would have made with no survey at all, which already scores ~62% on its own. `survey value = (yours − blind) / (1 − blind)`. An unsurveyed map is worth exactly 0.
-**Anomalies charted (60%).** How much of what the tide gauge counted your chart accounts for, with invented exceptions subtracted. This is the hunt, scored on its own terms.
+**Anomalies charted (45%).** How much of what the tide gauge counted your chart accounts for, with invented exceptions subtracted. This is the hunt, scored on its own terms.
 
 Both are blended, then multiplied by an anchor-efficiency bonus: `1 + (12 - anchorsUsed) * 0.04`. Final points = blended value x bonus x 1000.
 
@@ -108,7 +109,7 @@ It runs the game headlessly over 200 fixed maps and asserts the balance properti
 
 See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
-- Raise the patch-fidelity ceiling. A patch centred on one off-centre anchor covers only part of its anomaly, so even perfect anchoring closes just ~36% of the gauge. That caps what the hunt can ever be worth.
+- Localise anomalies vertically. The gauge gives the column exactly, but a column tally says nothing about the row, so where in a blob your anchor lands still decides how good the patch is: anchoring dead centre is worth 6.6 coastline points, anchoring anywhere in it 3.6.
 - Seeded daily coastlines and a spoiler-free share string.
 - Show the model's own uncertainty so the player can see where an anchor is worth spending.
 - Close the remaining gap in the smooth fit: 12 coast anchors reach 73%, but perfect knowledge of the coastline would reach 83%.
@@ -117,6 +118,7 @@ See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
 ## Changelog
 
+- **v6** - exceptions are placed from the gauge's column profile instead of centred on the anchor, and merged anomaly runs are split between features. Charting the anomalies now closes 52% of the gauge, up from 36%, and where in a blob the anchor lands no longer affects the horizontal fit at all (32% → 52% closure when anchoring off centre). The hunt weight drops from 0.60 to 0.45 as a result, leaving more of the score on the coastline.
 - **v5** - the hunt is scored: 60% of the score is now how much of the tide gauge your chart closes, so hunting anomalies beats grinding the coastline at the same budget (+18 pts, 95% CI ±16, paired over 800 maps). The gauge also corroborates the model - where the instrument reports something unexplained, one contradicting anchor is enough to carve an exception instead of two, lifting detection from 74% to 80%.
 - **v4** - the tide gauge: a free instrument that counts, per stretch of coast, the cells no smooth coastline can explain, so the anomaly hunt is directed rather than blind. Gauge-guided probing beats blind probing 263 points to 240.
 - **v3** - the model can be surprised: interval constraints, a robust leave-one-out fit that rejects contradicted anchors, local anomaly patches, survey-adaptive bandwidth, and baseline-relative scoring. Finding both anomalies with 6 anchors now beats a 12-anchor coastal survey.

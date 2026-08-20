@@ -132,7 +132,7 @@ check('hunting beats grinding the coast at the same budget', md-ci > 0,
 check('the score is the declared blend of coastline and hunt', (()=>{
   generate(); clearAnchors(); walkCoast(8); predict();
   const d=scoreDetail();
-  return Math.abs(d.total-(0.40*d.lift+0.60*d.hunt))<1e-9;
+  return Math.abs(d.total-(0.55*d.lift+0.45*d.hunt))<1e-9;
 })());
 // averaged over maps rather than asserted per map: an individual patch can be
 // offset enough to only partly close its sector
@@ -147,10 +147,10 @@ for(let i=0;i<120;i++){
   predict(); hAfter+=huntScore();
 }
 check('an uncharted map closes none of the gauge', hBefore===0);
-// A patch centred on one off-centre anchor only ever covers part of its anomaly,
-// so even perfect anchoring closes about a third of the gauge. That ceiling caps
-// the hunt term; raising it is patch-fidelity work, not scoring work.
-check('charting the anomalies closes a real share of the gauge', hAfter/hMaps > 0.30,
+// Patches are placed from the gauge's own column profile, so how far off-centre
+// the anchor landed no longer decides how good the patch is. What is left is the
+// row, which a column tally cannot give and the anchor must supply.
+check('charting the anomalies closes most of the gauge', hAfter/hMaps > 0.45,
       (hAfter/hMaps*100).toFixed(0)+'% closed over '+hMaps+' maps');
 
 // --- the tide gauge -------------------------------------------------------
