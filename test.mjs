@@ -17,7 +17,8 @@ new Function('window','document', src)(globalThis.window, globalThis.document);
 const TT = globalThis.TideTable;
 const { generate, predict, coastlineScore, scoreDetail, huntScore, gauge, unexplainedCells, dailySeed, shareText, getSeed, getSupport, getTruth, getPredicted,
         getAnomalies, getTruthAnomalies, setAnchor, clearAnchors, ROWS, COLS, MAX_ANCHORS, GAUGE_SECTORS,
-        lockSurvey, backToSurvey, resetChart, paint, setBrush, getPhase, getProposal, getStrokeCount, getSmooth, getTruthSmooth } = TT;
+        lockSurvey, backToSurvey, resetChart, paint, setBrush, getPhase, getProposal, getStrokeCount, getSmooth, getTruthSmooth,
+        getPar, coachLine, weakColumns, PAR_ANCHORS } = TT;
 
 // deterministic maps so the assertions below mean the same thing on every run
 let _s = 20260820;
@@ -387,6 +388,91 @@ check('the brush can lose: an overconfident stroke costs', mean(dR3)+ci95(dR3) <
 check('painting the gauge\u2019s reading back at it earns almost nothing',
       mean(pPhantom)*3 < mean(pModel),
       mean(pPhantom).toFixed(0)+' pts vs '+mean(pModel).toFixed(0)+' for finding them');
+
+// --- par, and the coach ---------------------------------------------------
+// A score of 267 meant nothing on its own and nothing on the board said what a
+// good number looked like. Par is what a reference survey scores on the same map,
+// so it moves with the map's difficulty; the coach names the next best move.
+
+// computePar() runs a whole reference survey inside generate(), so it has to hand
+// the map back untouched: no anchors, no prediction, full efficiency bonus.
+check('par is fixed for a seed and leaves no state behind', (()=>{
+  generate(4242);
+  const a=getPar();
+  if(getPredicted()!==null) return false;
+  if(Math.abs(scoreDetail().eff-(1+MAX_ANCHORS*TT.ANCHOR_COST))>1e-9) return false;
+  generate(999); generate(4242);
+  return getPar()===a && a>0;
+})());
+
+const PARN=300; let beatLazy=0, beatFind=0, beatGrind=0;
+for(let i=0;i<PARN;i++){
+  generate(12000+i); const p=getPar();
+  clearAnchors(); predict();                       if(scoreDetail().points>p) beatLazy++;
+  clearAnchors(); walkCoast(11); predict();        if(scoreDetail().points>p) beatGrind++;
+  clearAnchors(); walkCoast(6);
+  for(const a of getTruthAnomalies()) setAnchor(a.r,a.c);
+  predict();                                       if(scoreDetail().points>p) beatFind++;
+}
+console.log('\npar (a '+PAR_ANCHORS+'-anchor coastal survey on the same map), '+PARN+' maps');
+console.log('  beaten by: doing nothing '+(beatLazy/PARN*100).toFixed(0)
+  +'%   grinding 11 coast anchors '+(beatGrind/PARN*100).toFixed(0)
+  +'%   finding the anomalies '+(beatFind/PARN*100).toFixed(0)+'%\n');
+
+check('par is never beaten by doing nothing', beatLazy===0);
+check('par is beatable by finding the anomalies', beatFind/PARN > 0.70,
+      (beatFind/PARN*100).toFixed(0)+'% of maps');
+check('par still makes grinding a coin flip', beatGrind/PARN > 0.35 && beatGrind/PARN < 0.75,
+      (beatGrind/PARN*100).toFixed(0)+'% of maps');
+
+check('the coach says something in every phase', (()=>{
+  generate(4242); clearAnchors();
+  const seen=[coachLine()];
+  walkCoast(3); predict(); seen.push(coachLine());
+  lockSurvey();             seen.push(coachLine());
+  TT.revealTruth();         seen.push(coachLine());
+  return seen.every(t=>typeof t==='string' && t.length>40) && new Set(seen).size===4;
+})());
+// The guesswork count is the per-click feedback the board never gave: it has to
+// actually fall as the coast is surveyed, or it is just another static label.
+check('the coach\u2019s guesswork count falls as the coast is surveyed', (()=>{
+  let prev=null, ok=true;
+  for(const n of [0,2,4,6,8,10]){
+    let tot=0;
+    for(let i=0;i<60;i++){ generate(20000+i); clearAnchors(); walkCoast(n); predict(); tot+=weakColumns(); }
+    const avg=tot/60;
+    if(prev!==null && avg>prev) ok=false;
+    prev=avg;
+  }
+  return ok && prev<COLS/4;
+})(), '30 -> 19 -> 11 -> 6 -> 4 -> 2 columns for a player who spreads anchors');
+
+// The coach must never send the player somewhere the game will not let them go,
+// and must never congratulate them while the board is showing a problem.
+check('the coach never advises spending an anchor the player does not have', (()=>{
+  for(let i=0;i<200;i++){
+    generate(20000+i); clearAnchors(); walkCoast(MAX_ANCHORS); predict();
+    const t=coachLine();
+    if(/next anchor|Probe|Click any cell/.test(t)) return false;
+  }
+  return true;
+})());
+// gauge() clamps `short` at zero, so an over-charted sector reads as solved to
+// anything looking at `short` alone - which is how the coach came to say "nothing
+// left to find" over a red segment.
+check('the coach never says the gauge is clear while a red segment shows', (()=>{
+  let reds=0;
+  for(let i=0;i<400;i++){
+    generate(20000+i); clearAnchors(); walkCoast(7);
+    // probe blindly to provoke phantom exceptions
+    for(let c=2;c<COLS;c+=9) setAnchor(2,c);
+    predict();
+    if(!TT.sectorsByState().red.length) continue;
+    reds++;
+    if(/nothing left to find/.test(coachLine())) return false;
+  }
+  return reds>0;
+})(), 'provoked and checked on real over-charted maps');
 
 generate(); clearAnchors(); walkCoast(8);
 for(const a of getTruthAnomalies()) setAnchor(a.r,a.c);

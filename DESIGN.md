@@ -102,7 +102,10 @@ This is the highest retention-per-line-of-code item in the repository. Nothing e
 
 The fit already computes a corroboration weight per column (`conf` in `fitSea`). Render weakly-supported columns with a fade or hatch. The player can then *see* which stretch of coast their next anchor should go to, which turns the board itself into the strategy layer instead of leaving placement to intuition. Nearly free — the number is already there.
 
-### 5. Make the reveal a moment
+### 5. Make the reveal a moment — still open, and now the weakest beat
+
+Par gives the reveal a verdict to deliver ("you beat par by 26"), but the staging below is still unbuilt and the truth still appears all at once.
+
 
 Right now the truth appears instantly and a number changes. Stage it: the coastline settles first, then the anomalies pop, then the errors light up. Give the anomalies names on reveal ("Bitter Lake", "Cape Nettle"). This is the part people screenshot, and it currently reads like a form validation result.
 
@@ -179,14 +182,52 @@ Five coastlines in a row with an escalating budget, unlocking tools as you go: s
 
 6b promoted the **column sounding** from a nice-to-have to the thing the economy is waiting on. A sounding that names the column but not the row would cut the search space from a 6×16 sector to a 1×16 strip — from a 16% hit rate to something near 80% — which is the difference between a probe being worth a sixth of a find and being worth most of one. Cost it against an anchor and the hunt becomes a real purchase rather than a lottery ticket. Measure the hit rate before tuning the price.
 
-### 8. Par, not just points
+### 8. Par, not just points ✅ shipped in v9
 
-The harness can run a reference bot over the current seed in milliseconds. Show "par: 6 anchors, 45%" on the board. Beating a named opponent motivates far better than an abstract score does, and it makes a bad map feel like a hard hole rather than a broken game.
+Par is what a five-anchor coastal survey scores on the same map, computed in `generate()` and shown before the player spends anything. Five is measured, not chosen: over 300 maps it is the most discriminating of the candidates (3–8 anchors).
+
+| how you play | beats par |
+|---|---|
+| lock in the blind guess | **0%** |
+| grind 11 anchors along the coast | 59% |
+| survey the coast and find the anomalies | 84% |
+
+Unbeatable by doing nothing, a coin flip for brute force, comfortably beaten by playing the way the game is about. Par is per-map, so a mean coastline gets a low par instead of feeling broken, and it travels in the share string so the number carries a reference with it.
+
+One detail worth recording: the first implementation spaced the anchors at `i*COLS/5`, giving columns 0, 6, 12, 18, 24 — which strands the last sixth of the map and puts one anchor on the extrapolating edge. Par swung between 254 and 336 depending on which side of the map the anomalies fell. Half-offsetting to `(i+0.5)*COLS/5` (3, 9, 15, 21, 27) is worth +16 points on average and, more importantly, makes the benchmark symmetric.
+
+### 8b. The coach ✅ shipped in v9 — and it is the thing that was actually missing
+
+The repository owner played v8 and said: *"tbh i dont understand the game. i just click and then i reveal truth."*
+
+That is the most important measurement in this document, and it went unmade for six versions. v3 through v8 tuned the economy to tight confidence intervals — the hunt term, the positional rewrite, `HUNT_WEIGHT` swept twice — and never once checked whether a person could perceive any of it. A new player got a blank grid, 120 words of standfirst written in the model's own vocabulary ("the model's coast becomes a *proposal*"), an instrument reporting "38 of 38 unfound", a score of 267 out of nothing, and no feedback whatsoever on whether the anchor they just spent had bought anything.
+
+The fix is one line above the board, recomputed on every click, naming the single most valuable thing to do next. Three rules it follows:
+
+- **Point at what is already on screen.** "The pale, washed-out columns", "the 2nd segment from the left". The job is to teach the board, not to add more board.
+- **Give the honest advice.** Probing is break-even against surveying more coast (−7 pts, 95% CI ±11), so the coach says *"about one probe in six lands on one"* rather than sending the player hunting because hunting is the interesting mechanic.
+- **Show a number that moves.** The guesswork count is the per-click feedback the game never had: 30 → 19 → 11 → 6 → 4 → 2 as a player spreads anchors. A coach that repeats itself verbatim is nagging; one whose number falls is teaching.
+
+The state distribution, over 400 maps × 13 anchor counts, for two play styles:
+
+| coach state | spreads anchors | works left to right |
+|---|---|---|
+| opening | 8% | 8% |
+| spend on the coast | 59% | 75% |
+| probe the amber segment | 25% | 13% |
+| nothing left, lock in | 8% | 4% |
+
+The left-to-right player is told to keep working the coast for longer, which is correct — their coverage really is worse (13 guesswork columns at 6 anchors against 6).
+
+Four bugs found in review and fixed before shipping, all of them cases of the coach saying something untrue: advising an anchor after all 12 were spent (512 of 600 seeds); congratulating the player on a clear gauge while a red over-charted segment was on screen (45 of 101 firings, because `gauge()` clamps `short` at zero); saying "the amber segment" when there were two or more (300 of 422 firings); and the par bias above. There is also a fifth case that turned out not to be a bug: after a single anchor the count can stay at 30 of 30, because the model rejected that anchor as an anomaly and it is therefore no evidence about the coastline at all. The coach now says so.
+
+**What this does not fix.** The gauge still reads "33 of 33 unfound". The coach points at it, which is a patch, not a cure — see the backlog.
 
 ---
 
 ## Lower priority, still worth doing
 
+- **Rewrite the tide gauge in human words.** "33 of 33 unfound" is an instrument readout, not a game element, and it is the last piece of the board still speaking the model's vocabulary rather than the player's. The counts carry real strategic information, so this is a rewrite rather than a deletion.
 - **Mobile/touch layout.** 30 × 20px cells = 600px; it is cramped, there is no touch affordance for "remove anchor", and since v8 painting needs a drag that touch does not deliver.
 - **Difficulty curve.** Grid size, anchor budget, and coastline waviness are all single constants. Expose them as Calm / Standard / Broken Coast.
 - **WFC for anomaly generation.** The original plan, and it still fits: local adjacency is bad at reconstructing a smooth coast but genuinely good at growing plausible irregular blobs. Use it to plant features, not to predict them.

@@ -24,6 +24,8 @@ The anomalies exist specifically because a smooth coastline model cannot see the
 
 Open `index.html` in any browser, or use the [hosted link](https://raw.githack.com/konstantinos-malavazos/tide-table/main/index.html). No build step, no dependencies.
 
+Above the board, one line tells you the single most valuable thing to do next, and it changes every click. It points at marks that are already on the screen — the pale washed-out columns, the amber segment on the gauge — because the job is to teach the board, not to replace it. It gives the honest advice, too: when it sends you probing for an anomaly it tells you that about one probe in six lands.
+
 **Step 1 — survey.**
 
 - Click cells to drop survey anchors (up to 12). Click a cell again to remove its anchor. The predicted coast redraws live as you survey.
@@ -68,6 +70,22 @@ The obvious instrument is a water tally: count the sea, notice a shortfall, dedu
 A sand tally fails the same way (±30 noise). Counting tile transitions is sensitive but biased, because a wiggly true coast has more transitions than any smoothed fit, so it reads nonzero even on a perfect survey. Counting cells a smooth coast cannot explain is invariant to where your coastline sits, which is the property that matters.
 
 Reporting it by sector rather than as one number is not a convenience. A single global reading tells you something is out there but never where, which leaves you probing blind — and blind probing is worth so little that the anchors it costs beat the anchors it saves. Measured end to end, the global version scores **245 points against 249 for not probing at all**: strictly worse than ignoring it.
+
+## Par
+
+A score of 267 means nothing on its own. Nothing on the board said what a good number looked like, so there was nothing to get better at, and a hard map was indistinguishable from a broken one.
+
+**Par is what a five-anchor coastal survey scores on the same map** — walk the coast at five evenly spaced columns and stop. It is computed at generate time, shown before you spend anything, and it travels in the share string. Because it is measured on your map, it moves with the map's difficulty: a mean coastline gets a low par rather than feeling unfair.
+
+Five is chosen by measurement. Over 300 maps it is the most discriminating of the candidates tried (3 through 8 anchors):
+
+| how you play | beats par |
+|---|---|
+| lock in the blind guess, spend nothing | **0%** |
+| grind 11 anchors along the coast | 59% |
+| survey the coast and find the anomalies | 84% |
+
+So par is unbeatable by doing nothing, a coin flip for brute force, and comfortably beaten by playing the way the game is about. That is the shape a benchmark should have.
 
 ## Scoring
 
@@ -154,6 +172,7 @@ Since v8 it also asserts the properties the brush depends on — that painting n
 
 See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
+- **Rewrite the tide gauge in words a player can act on.** It still reads "33 of 33 unfound", which is an instrument readout rather than a game element. The coach now points at it, which is a patch over the problem rather than a fix.
 - **A column sounding** — a costed instrument that narrows the search to a single column without giving away the row. This is now the highest-value item in the repository: with the hunt scored positionally, finding an anomaly is worth ~207 points but searching for one is break-even, purely because the gauge's sector is too coarse to aim inside.
 - Mobile and touch layout. Painting is a drag gesture and drag does not currently work under touch, so the chart phase is click-only on a phone.
 - Close the remaining gap in the smooth fit: 12 coast anchors reach 73%, but perfect knowledge of the coastline would reach 83%.
@@ -163,6 +182,7 @@ See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
 ## Changelog
 
+- **v9** - the game explains itself. A coach line above the board names the single most valuable next move and changes every click, pointing at marks already on screen and quoting the real odds rather than the flattering ones; it replaces a 120-word standfirst written in the model's own vocabulary. And every map now has a **par** - what a five-anchor coastal survey scores on that same map - shown before you spend anything and carried in the share string, so the score finally means something. Beaten by doing nothing 0% of the time, by grinding 59%, by finding the anomalies 84%.
 - **v8** - the player predicts. Play splits into a survey beat and a chart beat with an explicit lock-in between: the anchors freeze, the model's coastline becomes a proposal, and the player paints over it before revealing. A careful stroke is worth +38 pts (95% CI ±6) and an overconfident one −143 (±11), so the brush is a real decision in both directions. Painting also exposed a hole in the scoring: the hunt term counted exception cells without asking where they were, so painting the gauge's own reading back at it, from zero anchors, beat honest play by +106 pts. The hunt is now scored positionally, as lift above the blind guess over the cells the anomalies actually occupy. Two earlier claims are withdrawn as a result - see the scoring section and DESIGN.md.
 - **v7** - daily coastlines and shareable results (`?seed=`), a hidden anomaly count of 0–4 instead of always 2, and the model's own uncertainty drawn on the board so you can see which columns are guesswork. Vertical localisation was investigated and rejected: see DESIGN.md.
 - **v6** - exceptions are placed from the gauge's column profile instead of centred on the anchor, and merged anomaly runs are split between features. Charting the anomalies now closes 52% of the gauge, up from 36%, and where in a blob the anchor lands no longer affects the horizontal fit at all (32% → 52% closure when anchoring off centre). The hunt weight drops from 0.60 to 0.45 as a result, leaving more of the score on the coastline.
