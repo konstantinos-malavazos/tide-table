@@ -26,12 +26,16 @@ Open `index.html` in any browser, or use the [hosted link](https://raw.githack.c
 - Read the **tide gauge** under the board before you spend anything. It costs nothing, and it tells you which stretch of coast still hides something — and how much of it — but never where in that stretch. An amber segment means there is something there you have not found; a red one means your chart has invented an exception that is not there, and you should pull the anchor that caused it.
 - If an anchor contradicts everything around it, the model marks it with a dashed purple ring and carves a **local exception** there instead of bending the whole coastline to reach it.
 - **Reveal truth** shows the real coast and scores you. Red outlines mark cells you got wrong inside the scored band; faint dotted outlines mark errors outside it, which cost nothing.
-- **New coastline** generates a fresh map with 2 hidden anomalies.
+- **New coastline** generates a fresh random map. **Today's coastline** returns to the daily one.
+- Pale, washed-out columns are the model telling you it is guessing there — no anchor near enough to hold the coast up. That is where your next anchor is worth spending.
+- After the reveal you get a spoiler-free result to share. Any map can be linked directly with `?seed=`.
 
 ## Mechanics (under the hood)
 
 - Grid is 30 x 16. Three tile types: water, sand, land.
-- The hidden truth is generated from a sea-level curve (a sum of sines) thresholded into tiles, then 2 anomalies are planted (a lake and a headland).
+- The hidden truth is generated from a sea-level curve (a sum of sines) thresholded into tiles, then between **0 and 4** anomalies are planted — lakes sitting inland, headlands jutting out to sea. **How many is itself hidden.** Always planting exactly two let you count to two and stop; not knowing is what makes the last few anchors a decision, and it is why the gauge has to be readable before you spend anything — on a clear map the right move is to spend nothing.
+- Everyone gets the same coastline on the same date. The generator is seeded (`mulberry32`), the daily seed comes from the date in your own timezone, and `?seed=N` opens any specific map.
+- On a map that hides nothing the hunt is not worth full marks for free: it simply is not part of the score, and the coastline carries all of it.
 - **Every anchor is an interval constraint** on the sea level in its column — the exact inverse of the threshold that built the grid. Sand at row `r` means the sea level is within `±0.9` of `r`; water at row `r` only means the coast is somewhere above `r - 0.9`; land at row `r` only means it is somewhere below `r + 0.9`. Deep water and deep land are therefore nearly uninformative, which is as it should be.
 - **The global curve is fit robustly** by local linear regression, weighted by horizontal distance. Sand pulls the fit to its row; water and land act purely as barriers and say nothing while the fit already satisfies them.
 - **Bandwidth follows the survey.** With few anchors only a broad, smooth coast is justified; once you have sampled densely the model stops blurring away the detail you paid for.
@@ -109,7 +113,8 @@ It runs the game headlessly over 200 fixed maps and asserts the balance properti
 
 See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
-- Localise anomalies vertically. The gauge gives the column exactly, but a column tally says nothing about the row, so where in a blob your anchor lands still decides how good the patch is: anchoring dead centre is worth 6.6 coastline points, anchoring anywhere in it 3.6.
+- Commit before the reveal, or let the player paint over the model's guess — they still never actually predict anything themselves.
+- Mobile and touch layout.
 - Seeded daily coastlines and a spoiler-free share string.
 - Show the model's own uncertainty so the player can see where an anchor is worth spending.
 - Close the remaining gap in the smooth fit: 12 coast anchors reach 73%, but perfect knowledge of the coastline would reach 83%.
@@ -118,6 +123,7 @@ See [DESIGN.md](DESIGN.md) for the full plan. The short version:
 
 ## Changelog
 
+- **v7** - daily coastlines and shareable results (`?seed=`), a hidden anomaly count of 0–4 instead of always 2, and the model's own uncertainty drawn on the board so you can see which columns are guesswork. Vertical localisation was investigated and rejected: see DESIGN.md.
 - **v6** - exceptions are placed from the gauge's column profile instead of centred on the anchor, and merged anomaly runs are split between features. Charting the anomalies now closes 52% of the gauge, up from 36%, and where in a blob the anchor lands no longer affects the horizontal fit at all (32% → 52% closure when anchoring off centre). The hunt weight drops from 0.60 to 0.45 as a result, leaving more of the score on the coastline.
 - **v5** - the hunt is scored: 60% of the score is now how much of the tide gauge your chart closes, so hunting anomalies beats grinding the coastline at the same budget (+18 pts, 95% CI ±16, paired over 800 maps). The gauge also corroborates the model - where the instrument reports something unexplained, one contradicting anchor is enough to carve an exception instead of two, lifting detection from 74% to 80%.
 - **v4** - the tide gauge: a free instrument that counts, per stretch of coast, the cells no smooth coastline can explain, so the anomaly hunt is directed rather than blind. Gauge-guided probing beats blind probing 263 points to 240.

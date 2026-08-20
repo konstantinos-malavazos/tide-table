@@ -23,6 +23,7 @@
   .cell.pred-w{background:var(--pw)} .cell.pred-s{background:var(--ps)} .cell.pred-l{background:var(--pl)}
   .cell.anchor::after{content:'';position:absolute;inset:6px;border-radius:50%;background:#fff;box-shadow:0 0 0 2px rgba(0,0,0,.55)}
   .cell.anom::before{content:'';position:absolute;inset:1px;border-radius:3px;border:2px dashed #8e44ad}
+  .cell.unsure{filter:saturate(.2) brightness(1.06)}
   .cell.patch{box-shadow:inset 0 0 0 1px rgba(142,68,173,.35)}
   .cell.bad{outline:2px solid #d64545;outline-offset:-2px;z-index:1}
   .cell.miss{outline:2px dotted rgba(214,69,69,.4);outline-offset:-2px}
@@ -43,6 +44,8 @@
   .meta{color:var(--muted);font-size:13px;margin:4px 0;text-align:center;line-height:1.5}
   .meta b{color:var(--ink)}
   #score{display:none;margin-top:10px;font-size:15px;text-align:center;line-height:1.5}
+  #share{display:none;margin-top:14px;text-align:center}
+  #share pre{font-family:inherit;font-size:14px;line-height:1.5;margin:0 0 8px;letter-spacing:1px}
   #score .big{font-size:28px;font-weight:700;color:var(--accent)}
   .legend{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:14px;color:var(--muted);font-size:12px}
   .legend span{display:inline-flex;align-items:center;gap:5px}
@@ -61,15 +64,18 @@
     <button id="reveal" class="primary">Reveal truth</button>
     <button id="clear">Clear anchors</button>
     <button id="new">New coastline</button>
+    <button id="today">Today's coastline</button>
   </div>
   <div class="meta" id="meta"></div>
   <div id="score"></div>
+  <div id="share"></div>
   <div class="legend">
     <span><span class="sw" style="background:var(--water)"></span>Water</span>
     <span><span class="sw" style="background:var(--sand)"></span>Sand</span>
     <span><span class="sw" style="background:var(--land)"></span>Land</span>
     <span><span class="sw" style="background:#fff;box-shadow:0 0 0 1px #888"></span>Anchor (surveyed)</span>
     <span><span class="sw" style="background:var(--ps)"></span>Prediction (live)</span>
+    <span><span class="sw" style="background:#eceff1"></span>Guesswork (no anchor near)</span>
     <span><span class="sw" style="background:#fff;box-shadow:0 0 0 2px #8e44ad"></span>Anomaly (model carved an exception)</span>
     <span><span class="sw" style="background:#d64545"></span>Wrong prediction</span>
   </div>
@@ -96,16 +102,26 @@ const RAD_SCALE=1.00;  // the gauge counts a blob's sand fringe too, so its area
 const CORE_FRAC=0.70;  // an anomaly's solid core, as a fraction of the footprint the gauge counts
 const ANCHOR_COST=0.04;
 const HUNT_WEIGHT=0.45;  // share of the score that comes from closing the gauge rather than from the coastline
+const SUPPORT_MIN=0.45; // below this a column is a guess, and the board says so
 const GAUGE_SECTORS=5;  // the tide gauge reports separately for each stretch of coast
 
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 
-let seed=0, rng=mulberry32(seed);
+let seed=0, rng=mulberry32(seed), isDaily=false;
 let trueSeaFn=null;
-let truth=[], truthAnomalies=[], anchors=new Map(), predicted=null, predictedSmooth=null, anomalies=[], revealed=false;
+let support=[], truth=[], truthAnomalies=[], anchors=new Map(), predicted=null, predictedSmooth=null, anomalies=[], revealed=false;
 
-function generate(){
-  seed=(Math.random()*1e9)|0;
+// Day number since the epoch, in the player's own timezone: everyone gets the
+// same coastline on the same date without a server deciding what "today" is.
+function dayNumber(d){
+  d=d||new Date();
+  return Math.floor(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())/86400000);
+}
+function dailySeed(){ return (dayNumber()*2654435761)>>>0; }
+
+function generate(s){
+  seed = (s===undefined || s===null) ? (Math.random()*1e9)|0 : (s>>>0);
+  isDaily = (seed===dailySeed());
   rng=mulberry32(seed);
   const p1=rng()*Math.PI*2, p2=rng()*Math.PI*2, p3=rng()*Math.PI*2;
   trueSeaFn = c => ROWS*0.5 + 2.2*Math.sin(0.25*c+p1) + 1.2*Math.sin(0.11*c+p2) + 0.7*Math.sin(0.50*c+p3);
@@ -115,11 +131,19 @@ function generate(){
   predicted=null;
   predictedSmooth=null;
   anomalies=[];
+  support=[];
   revealed=false;
   render();
   updateMeta();
   renderGauge();
-  const s=document.getElementById('score'); if(s) s.style.display='none';
+  const el=document.getElementById('score'); if(el) el.style.display='none';
+  const sh=document.getElementById('share'); if(sh) sh.style.display='none';
+  writeUrl();
+}
+
+function writeUrl(){
+  if(typeof history==='undefined' || !history.replaceState) return;
+  try{ history.replaceState(null,'', isDaily ? location.pathname : location.pathname+'?seed='+seed); }catch(e){}
 }
 
 function buildGrid(seaFn){
@@ -131,20 +155,25 @@ function buildGrid(seaFn){
   return g;
 }
 
+// How many anomalies a map holds is itself hidden. Always planting exactly two
+// let you count to two and stop; not knowing is what makes the last few anchors
+// a decision - and it is why the gauge has to be readable before you spend
+// anything, because on a clear map the right move is to spend nothing.
+const ANOMALY_COUNTS=[0,1,1,2,2,2,3,3,4];
+
 function plantAnomalies(){
   truthAnomalies=[];
-  let done=0, tries=0;
-  while(done<1 && tries<400){ tries++;
+  const want=ANOMALY_COUNTS[Math.floor(rng()*ANOMALY_COUNTS.length)];
+  let tries=0;
+  while(truthAnomalies.length<want && tries<600){
+    tries++;
     const cr=3+Math.floor(rng()*(ROWS-6));
     const cc=3+Math.floor(rng()*(COLS-6));
-    if((cr - trueSeaFn(cc)) < -2.2){ applyPatch(truth,cr,cc,2.0,3.1,WATER,SAND); truthAnomalies.push({r:cr,c:cc,tile:WATER,kind:'lake'}); done++; }
-  }
-  tries=0;
-  while(done<2 && tries<400){ tries++;
-    const cr=3+Math.floor(rng()*(ROWS-6));
-    const cc=3+Math.floor(rng()*(COLS-6));
-    const d=cr - trueSeaFn(cc);
-    if(d>0.6 && d<2.0){ applyPatch(truth,cr,cc,1.8,2.9,LAND,SAND); truthAnomalies.push({r:cr,c:cc,tile:LAND,kind:'headland'}); done++; }
+    const d=cr-trueSeaFn(cc);
+    // keep them apart, or two overlapping blobs read as one feature
+    if(truthAnomalies.some(a=>Math.hypot(cc-a.c,cr-a.r)<5)) continue;
+    if(d<-2.2){ applyPatch(truth,cr,cc,2.0,3.1,WATER,SAND); truthAnomalies.push({r:cr,c:cc,tile:WATER,kind:'lake'}); }
+    else if(d>0.6 && d<2.0){ applyPatch(truth,cr,cc,1.8,2.9,LAND,SAND); truthAnomalies.push({r:cr,c:cc,tile:LAND,kind:'headland'}); }
   }
 }
 
@@ -259,6 +288,7 @@ function fitSea(list){
   }
   return {
     level: c=>at(c,-1),
+    support: c=>conf(c,-1),          // how much evidence stands behind this column
     outliers: list.filter((a,i)=>w[i]===0)
   };
 }
@@ -327,6 +357,10 @@ function applyShapedPatch(grid,p){
 function predict(){
   const list=anchorList();
   const fit=fitSea(list);
+  // The fit already knows where it is guessing. Showing it turns the board into
+  // the strategy: a pale column is one your next anchor is worth spending on.
+  support=[];
+  for(let c=0;c<COLS;c++) support[c]=fit.support(c);
   const pred=buildGrid(fit.level);
   predictedSmooth=buildGrid(fit.level);   // the same coast without the exceptions, for the gauge
   const patches=patchesFor(fit.outliers);
@@ -442,7 +476,7 @@ function huntScore(){
   const g=gauge();
   let surveyed=0, short=0, charted=0;
   for(const s of g){ surveyed+=s.surveyed; short+=s.short; charted+=s.charted; }
-  if(surveyed===0) return 1;
+  if(surveyed===0) return null;               // nothing hidden here: there is no hunt to score
   const covered=surveyed-short, invented=Math.max(0,charted-surveyed);
   return Math.max(0,Math.min(1,(covered-invented)/surveyed));
 }
@@ -450,8 +484,10 @@ function huntScore(){
 function scoreDetail(){
   const acc=coastlineScore(), base=baselineScore();
   const lift = base>=1 ? 0 : Math.max(0,(acc-base)/(1-base));
+  // On a map that hides nothing the hunt is not worth full marks for free - it
+  // simply is not part of the score, and the coastline carries all of it.
   const hunt = huntScore();
-  const total = (1-HUNT_WEIGHT)*lift + HUNT_WEIGHT*hunt;
+  const total = hunt===null ? lift : (1-HUNT_WEIGHT)*lift + HUNT_WEIGHT*hunt;
   const eff = 1+(MAX_ANCHORS-anchors.size)*ANCHOR_COST;
   return {acc,base,lift,hunt,total,eff,points:Math.round(total*eff*1000)};
 }
@@ -476,7 +512,7 @@ function onClick(r,c){
   else if(anchors.size<MAX_ANCHORS) anchors.set(key,truth[r][c]);
   else return;
   if(anchors.size>0) predict();
-  else { predicted=null; predictedSmooth=null; anomalies=[]; }
+  else { predicted=null; predictedSmooth=null; anomalies=[]; support=[]; }
   render();
   updateMeta();
   renderGauge();
@@ -502,6 +538,7 @@ function render(){
     } else if(predicted){
       cell.classList.add('pred-'+TILE_CLS[predicted[r][c]]);
       if(inPatch(r,c)) cell.classList.add('patch');
+      if((support[c]||0)<SUPPORT_MIN) cell.classList.add('unsure');
     }
     cell.addEventListener('click',()=>onClick(r,c));
     board.appendChild(cell);
@@ -540,16 +577,48 @@ function showScore(){
   el.innerHTML='Coastline <b>'+(d.acc*100).toFixed(1)+'%</b> correct '+
     '<span style="color:var(--muted)">(a blind guess scores '+(d.base*100).toFixed(1)+'%)</span><br>'+
     'Coastline survey <b>'+(d.lift*100).toFixed(1)+'%</b>'+
-    ' &nbsp;·&nbsp; anomalies charted <b>'+(d.hunt*100).toFixed(0)+'%</b>'+
+    (d.hunt===null ? ' &nbsp;·&nbsp; <span style="color:var(--muted)">nothing was hidden here</span>' : ' &nbsp;·&nbsp; anomalies charted <b>'+(d.hunt*100).toFixed(0)+'%</b>')+
     ' &nbsp;·&nbsp; anchor bonus ×'+d.eff.toFixed(2)+
     ' &nbsp;·&nbsp; <span class="big">'+d.points+'</span> pts';
 }
 
+// Spoiler-free: how each stretch of coast ended up, never where anything was.
+function shareText(){
+  const d=scoreDetail();
+  const marks=gauge().map(function(g){
+    if(g.surveyed===0) return '\u2b1c';                       // nothing was there
+    if(g.short===0) return g.charted-g.surveyed>6 ? '\ud83d\udfe5' : '\ud83d\udfe9';
+    return g.short<g.surveyed ? '\ud83d\udfe8' : '\u2b1b';    // partly, or not at all
+  }).join('');
+  const url = typeof location==='undefined' ? ''
+    : '\n'+(isDaily ? location.origin+location.pathname : location.href);
+  return 'Tide Table '+(isDaily ? '#'+dayNumber() : 'seed '+seed)+
+    '  '+anchors.size+'\u2693  '+d.points+' pts\n'+marks+url;
+}
+
+function showShare(){
+  const el=document.getElementById('share');
+  if(!el) return;
+  el.style.display='block';
+  const txt=shareText();
+  el.innerHTML='<pre id="sharetext">'+txt.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</pre>'+
+    '<button id="copy">Copy result</button>';
+  document.getElementById('copy').addEventListener('click',function(){
+    const btn=document.getElementById('copy');
+    const done=function(ok){ btn.textContent = ok ? 'Copied' : 'Select the text above'; };
+    if(navigator.clipboard && navigator.clipboard.writeText)
+      navigator.clipboard.writeText(txt).then(function(){done(true);},function(){done(false);});
+    else done(false);
+  });
+}
+
 function initUI(){
-  document.getElementById('reveal').addEventListener('click',()=>{ if(revealed) return; if(!predicted) predict(); revealed=true; render(); showScore(); });
-  document.getElementById('clear').addEventListener('click',()=>{ anchors=new Map(); predicted=null; predictedSmooth=null; anomalies=[]; revealed=false; render(); updateMeta(); renderGauge(); const s=document.getElementById('score'); if(s) s.style.display='none'; });
+  document.getElementById('reveal').addEventListener('click',()=>{ if(revealed) return; if(!predicted) predict(); revealed=true; render(); showScore(); showShare(); });
+  document.getElementById('clear').addEventListener('click',()=>{ anchors=new Map(); predicted=null; predictedSmooth=null; anomalies=[]; support=[]; revealed=false; render(); updateMeta(); renderGauge(); const s=document.getElementById('score'); if(s) s.style.display='none'; });
   document.getElementById('new').addEventListener('click',()=>generate());
-  generate();
+  document.getElementById('today').addEventListener('click',()=>generate(dailySeed()));
+  const q=(typeof location!=='undefined'&&location.search||'').match(/[?&]seed=(\d+)/);
+  generate(q ? +q[1] : dailySeed());
 }
 
 if(typeof document!=='undefined' && typeof window!=='undefined'){
@@ -558,8 +627,8 @@ if(typeof document!=='undefined' && typeof window!=='undefined'){
 }
 
 if(typeof globalThis!=='undefined'){
-  globalThis.TideTable={generate,predict,coastlineScore,baselineScore,scoreDetail,huntScore,gauge,unexplainedCells,getTruth:()=>truth,getPredicted:()=>predicted,
-    getAnomalies:()=>anomalies,getTruthAnomalies:()=>truthAnomalies,setAnchor:(r,c)=>{anchors.set(r+','+c,truth[r][c]);},clearAnchors:()=>{anchors=new Map();anomalies=[];},
+  globalThis.TideTable={generate,predict,dailySeed,dayNumber,shareText,getSeed:()=>seed,coastlineScore,baselineScore,scoreDetail,huntScore,gauge,unexplainedCells,getTruth:()=>truth,getPredicted:()=>predicted,
+    getAnomalies:()=>anomalies,getSupport:()=>support,getTruthAnomalies:()=>truthAnomalies,setAnchor:(r,c)=>{anchors.set(r+','+c,truth[r][c]);},clearAnchors:()=>{anchors=new Map();anomalies=[];},
     ROWS,COLS,MAX_ANCHORS,ANCHOR_COST,GAUGE_SECTORS};
 }
 </script>

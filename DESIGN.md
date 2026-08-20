@@ -64,11 +64,25 @@ The gauge already knows the horizontal shape, so the patch now takes its column 
 
 Result: closure 36% → 52%, and 32% → 52% for the realistic case of anchoring off centre. Because the hunt term now earns more, `HUNT_WEIGHT` came *down* from 0.60 to 0.45 while the margin over grinding stayed significant (+21 pts, 95% CI ±14) — leaving more of the score on the coastline, which is the better place for it.
 
-### 2. Don't tell the player how many anomalies there are
+### 2. Don't tell the player how many anomalies there are ✅ shipped in v7
+
+Maps now hold 0–4 anomalies, weighted toward 2, and the count is never shown. One consequence had to be handled: a map that hides nothing was scoring the hunt term at 100% for free, so doing nothing earned points. On such a map the hunt is simply not part of the score and the coastline carries all of it.
+
+### 2b. Vertical localisation — investigated and rejected
+
+DESIGN.md listed this as the main thing limiting the hunt, on the premise that a patch's row is poorly estimated. Measured over 3,022 anomalies, that premise is wrong:
+
+| row estimate | mean error (rows) |
+|---|---|
+| the anchor's own row | **0.74** |
+| geometry (blob height + coast level) | 1.68 |
+| best blend of the two | 0.73 |
+
+The anchor is already accurate to well under a cell, and the geometric estimator is more than twice as bad — blending it in buys nothing. Detection is not the culprit either: an anchor on an anomaly's exact centre is flagged 74% of the time against 72% for one anywhere in the blob. The residual centre-vs-edge gap is simply the irreducible cost of a sub-cell row error on a radius-3 blob, and the player's lever for it already exists — a second anchor on the same feature lifts the coastline gain from +3.24 to +3.87. No change shipped.
 
 Currently it is always exactly 2, and the README says so. Randomise it 0–4 and keep it secret. Combined with the tide gauge, "is there a third one?" becomes the question the whole endgame turns on. Right now the player just counts to two and stops.
 
-### 3. Seeded dailies and a share string
+### 3. Seeded dailies and a share string ✅ shipped in v7
 
 The RNG is already deterministic (`mulberry32`) — only the seed selection uses `Math.random`. Exposing `?seed=` is a few lines. Then:
 
@@ -82,7 +96,7 @@ Tide Table #214   8⚓  54%
 
 This is the highest retention-per-line-of-code item in the repository. Nothing else here makes anyone come back tomorrow.
 
-### 4. Show the model where it is unsure
+### 4. Show the model where it is unsure ✅ shipped in v7
 
 The fit already computes a corroboration weight per column (`conf` in `fitSea`). Render weakly-supported columns with a fade or hatch. The player can then *see* which stretch of coast their next anchor should go to, which turns the board itself into the strategy layer instead of leaving placement to intuition. Nearly free — the number is already there.
 
@@ -124,6 +138,7 @@ Honest accounting of what v3 did not fix:
 - **Detection is ~74%, not 100%.** An anomaly anchor near the edge of its blob barely contradicts the fit, so it is correctly not flagged — but the player has no way to tell a missed detection from a mis-click. When an anomaly anchor is *not* flagged it still costs about −1.3 points of accuracy, the old failure mode in miniature.
 - **The smooth fit reaches 73% against an 83% ceiling** with a full 12-anchor coastal survey. Sand localises the sea level only to ±0.9 rows, so there is an intrinsic floor, but not a 10-point one. A proper spline or a Gaussian-process fit with a periodic kernel would close much of it.
 - **The scored band is generous.** Off-by-one-tier still earns 0.4, which is why a blind guess scores 62%. Baseline-relative scoring papers over this; tightening the band would make the underlying numbers mean more.
-- **Vertical placement is still the anchor's job, and that shows.** Patches now take their column and size from the gauge, so horizontal placement is exact — closure is identical (52%) whether you anchor an anomaly's centre or its edge. The row cannot come from a column tally, so it comes from the anchor, and that still matters: anchoring dead centre is worth 6.6 coastline points against 3.6 for anchoring anywhere in the blob. Fixing it needs a second instrument that reports by row, or an inference from the constraint that a lake must sit clear of the coast band.
+- **Vertical placement is the anchor's job and stays that way.** See 2b: the anchor's row is already accurate to 0.74 rows, better than any estimator built from the gauge, so the remaining centre-vs-edge gap is not recoverable from the information on hand.
+- **Scores are not comparable across maps.** A map hiding nothing is scored purely on coastline; a map hiding four is mostly a hunt. With dailies this matters less — everyone plays the same map — but a global leaderboard would need per-seed normalisation.
 - **The gauge's own reading can mislead in one direction.** A correct find whose patch is larger than the true anomaly reads as over-charted; the display only flags it past a 6-cell margin to avoid punishing good play, which means small phantom exceptions go unreported.
 - **`ANCHOR_COST` is tuned, not derived.** At 0.04 the efficiency bonus rewards a lean survey without making a zero-anchor run viable, but the whole curve shifts if the grid or budget changes.
