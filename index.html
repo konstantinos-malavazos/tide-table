@@ -14,7 +14,10 @@
   body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
        background:#f4f7f9;color:var(--ink);display:flex;flex-direction:column;align-items:center;padding:26px 12px 48px}
   h1{font-family:Georgia,'Times New Roman',serif;font-weight:600;font-size:27px;margin:0;letter-spacing:.5px}
-  .sub{color:var(--muted);font-size:13px;margin:5px 0 16px;text-align:center;max-width:620px;line-height:1.45}
+  .sub{color:var(--muted);font-size:13px;margin:5px 0 14px;text-align:center;max-width:620px;line-height:1.45}
+  #coach{max-width:640px;margin:0 0 16px;padding:11px 16px;border-radius:8px;text-align:center;
+         background:#fffdf6;border:1px solid #e6dcc0;color:var(--ink);font-size:13.5px;line-height:1.5}
+  #coach b{color:var(--accent)}
   .wrap{overflow:auto;max-width:100%}
   #board{display:grid;gap:1px;width:max-content;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;user-select:none;-webkit-user-select:none}
   .cell{width:20px;height:20px;background:var(--blank);cursor:pointer;position:relative;transition:background .1s}
@@ -57,6 +60,7 @@
   #share{display:none;margin-top:14px;text-align:center}
   #share pre{font-family:inherit;font-size:14px;line-height:1.5;margin:0 0 8px;letter-spacing:1px}
   #score .big{font-size:28px;font-weight:700;color:var(--accent)}
+  #score .parline{font-size:16px;margin-bottom:8px}
   .legend{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:14px;color:var(--muted);font-size:12px}
   .legend span{display:inline-flex;align-items:center;gap:5px}
   .sw{width:12px;height:12px;border-radius:3px;display:inline-block}
@@ -64,7 +68,8 @@
 </head>
 <body>
   <h1>Tide Table</h1>
-  <div class="sub"><b>Survey, then chart.</b> First spend survey anchors: click cells to measure them, and the model's coast redraws live. Then lock the survey — the anchors freeze, the model's coast becomes a <em>proposal</em>, and you paint over it. What you lock in is your chart, not the algorithm's. Fewer anchors = bigger bonus. You are scored on the coastline and on the anomalies you charted <em>in the right place</em>, so a lean survey that finds the lakes and headlands beats a thorough one that misses them — and a confident brushstroke in the wrong place costs more than it pays. The tide gauge below the board tells you how much each stretch of coast still hides, but never where in it.</div>
+  <div class="sub">Find the hidden coastline. <b>Measure</b> a few cells, <b>chart</b> what you think is there, then see how close you came — and whether you beat par.</div>
+  <div id="coach"></div>
   <div class="wrap">
     <div id="board"></div>
     <div id="gauge"></div>
@@ -127,9 +132,11 @@ const HUNT_WEIGHT=0.45;  // share of the score that comes from the hunt rather t
 const HUNT_INVENT=0.25;  // what an exception carved where there is nothing costs, per footprint cell
 const SUPPORT_MIN=0.45; // below this a column is a guess, and the board says so
 const GAUGE_SECTORS=5;  // the tide gauge reports separately for each stretch of coast
+const PAR_ANCHORS=5;    // the reference survey the board asks you to beat
 
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
 
+let par=0;
 let seed=0, rng=mulberry32(seed), isDaily=false;
 let trueSeaFn=null;
 let support=[], truth=[], truthAnomalies=[], anchors=new Map(), predicted=null, predictedSmooth=null, anomalies=[];
@@ -174,6 +181,7 @@ function generate(s){
   _smoothTruth=null; _unexTruth=null; _blind=null;   // all three are functions of trueSeaFn
   truth=buildGrid(trueSeaFn);
   plantAnomalies();
+  par=computePar();
   anchors=new Map();
   predicted=null;
   predictedSmooth=null;
@@ -194,6 +202,35 @@ function generate(s){
 function writeUrl(){
   if(typeof history==='undefined' || !history.replaceState) return;
   try{ history.replaceState(null,'', isDaily ? location.pathname : location.pathname+'?seed='+seed); }catch(e){}
+}
+
+/* ---- par ---------------------------------------------------------------------
+A score of 267 means nothing on its own: nothing on the board said what a good
+number looked like, so there was nothing to get better at, and a hard map was
+indistinguishable from a broken one. Par fixes both. It is what a reference
+survey scores *on this same map* - walk the coast at five evenly spaced columns
+and stop - so it moves with the map's difficulty and asks a question the player
+can act on: can you do better than just walking the coast?
+
+Five is chosen by measurement, not taste. Over 500 maps it is the most
+discriminating of the candidates: grinding 11 anchors along the coast clears it
+only 57% of the time, a survey that finds the anomalies clears it 87%, and
+locking in the blind guess clears it never. Par therefore rewards the strategy
+the game is about rather than sheer spend.
+--------------------------------------------------------------------------- */
+function computePar(){
+  anchors=new Map();
+  // Half-offset, so the five sit centred in their fifths (3, 9, 15, 21, 27)
+  // rather than flush left with the last sixth of the map unsurveyed and one
+  // anchor stranded on the extrapolating edge.
+  for(let i=0;i<PAR_ANCHORS;i++){
+    const c=Math.round((i+0.5)*COLS/PAR_ANCHORS);
+    for(let r=0;r<ROWS;r++) if(truth[r][c]===SAND){ anchors.set(r+','+c,SAND); break; }
+  }
+  predict();
+  const pts=scoreDetail().points;
+  anchors=new Map();               // generate() clears the rest a few lines below
+  return pts;
 }
 
 function buildGrid(seaFn){
@@ -765,6 +802,95 @@ function renderGauge(){
   }).join('');
 }
 
+/* ---- the coach ---------------------------------------------------------------
+The game was legible only to someone who had read DESIGN.md. A new player got a
+blank grid, 120 words of standfirst written in the model's own vocabulary, and an
+instrument reporting "38 of 38 unfound" - none of which says what to click. Five
+versions of scoring work had gone into an economy nobody could perceive.
+
+So: one line, above the board, recomputed on every click, naming the single most
+valuable thing to do next. It deliberately points at marks that are *already on
+the screen* - the washed-out columns, the amber segment - rather than inventing
+new UI, because the job is to teach the board rather than to replace it.
+
+It gives the honest advice, not the flattering one. Probing for anomalies is
+break-even against surveying more coast (-7 pts, 95% CI +/-11, paired over 800
+maps), so the coach says one probe in six lands, instead of sending the player
+hunting because hunting is the interesting mechanic.
+--------------------------------------------------------------------------- */
+
+// how many columns the fit has too little evidence to stand behind. A count
+// rather than a stretch, because the count is what shrinks as the player works -
+// and per-click feedback was the thing the board never gave.
+function weakColumns(){
+  let n=0;
+  for(let c=0;c<COLS;c++) if((support[c]||0)<SUPPORT_MIN) n++;
+  return n;
+}
+
+// gauge() clamps `short` at zero, so an over-charted sector looks identical to a
+// solved one to anything that reads `short` alone - which is how the coach came to
+// congratulate players sitting under a red segment.
+function sectorsByState(){
+  const g=gauge(), amber=[], red=[];
+  g.forEach(function(x,i){
+    if(x.short>0) amber.push({i:i,g:x});
+    else if(x.charted-x.surveyed>6) red.push({i:i,g:x});
+  });
+  amber.sort(function(a,b){ return b.g.short-a.g.short; });
+  return {amber:amber, red:red, n:g.length};
+}
+const ORDINALS=['1st','2nd','3rd','4th','5th','6th','7th','8th'];
+function segmentName(k,total){
+  return total<=1 ? 'the amber segment'
+    : 'the '+(ORDINALS[k.i]||(k.i+1)+'th')+' segment from the left';
+}
+
+function parVerdict(){
+  const d=scoreDetail().points-par;
+  if(d>0)  return 'You beat par by <b>'+d+'</b>. A five-anchor coastal survey scored '+par+' on this map.';
+  if(d===0) return 'Level with par (<b>'+par+'</b>) \u2014 exactly what a five-anchor coastal survey scores here.';
+  return 'Par was <b>'+par+'</b> and you came in '+(-d)+' behind it. A five-anchor coastal survey beat you on this map.';
+}
+
+function coachLine(){
+  if(phase==='revealed') return parVerdict();
+  if(phase==='chart'){
+    if(!strokes.size) return 'This is the model\u2019s guess, not yours. Where the board looks pale and washed out it is guessing \u2014 paint what you think is really there, or lock it in unchanged and take its answer.';
+    return '<b>'+strokes.size+'</b> cell'+(strokes.size===1?'':'s')+' painted. Lock in when you are happy \u2014 or reset and take the model\u2019s answer back.';
+  }
+  if(!anchors.size)
+    return 'A coastline is hidden in this grid \u2014 sea below it, land above it. <b>Click any cell to measure it.</b> You get 12 measurements, and every one you do not spend is worth 4% more at the end. Par on this map is <b>'+par+'</b>.';
+  const st=sectorsByState(), left=MAX_ANCHORS-anchors.size;
+  // A red segment is worth acting on at any budget, because the fix is to *remove*
+  // an anchor rather than spend one.
+  if(st.red.length){
+    const r=st.red[0];
+    return 'The <b>red segment</b> '+(st.n>1?'('+(ORDINALS[r.i]||(r.i+1)+'th')+' from the left) ':'')+
+      'means your chart has carved an exception that is not there. Click the surprising anchor beneath it to pull it back out \u2014 it is costing you points.';
+  }
+  if(left<=0)
+    return 'All <b>'+MAX_ANCHORS+'</b> measurements are spent, so there is nothing more to buy. <b>Lock the survey in</b> and chart it.';
+  // The coast first: it is 55% of the score and every anchor on it pays. Only
+  // once it is mostly held up is a probe worth considering, and even then the
+  // coach says what the odds actually are.
+  // An anchor the model rejects as an anomaly is a find, but it is not evidence
+  // about the coastline - so the guesswork count does not move, and without
+  // saying why, the coach looks like it ignored the click.
+  const found = anomalies.length
+    ? 'The model rejected '+(anomalies.length===1?'an anchor':anomalies.length+' anchors')+
+      ' as too surprising to be coast and carved '+(anomalies.length===1?'an exception':'exceptions')+
+      ' there \u2014 a good find, but it tells the coastline nothing. '
+    : '';
+  const weak=weakColumns();
+  if(weak>=3)
+    return found+'<b>'+weak+' of '+COLS+' columns</b> are still guesswork \u2014 the pale, washed-out ones, where no anchor is near enough to hold the coast up. Your next anchor buys the most there.';
+  if(st.amber.length)
+    return (weak? 'Only <b>'+weak+'</b> column'+(weak===1?'':'s')+' left guessing. ' : 'Your coast is held up all the way across. ')+
+      '<b>'+segmentName(st.amber[0],st.amber.length).replace(/^the /,'The ')+'</b> hides something no smooth coastline explains \u2014 a lake or a headland. Probe away from the coast beneath it; about one probe in six lands on one.';
+  return 'The coast is supported and the gauge is clear \u2014 there is nothing left to find. <b>Lock the survey in</b> and keep the bonus on your '+left+' unspent anchor'+(left===1?'':'s')+'.';
+}
+
 const PHASE_TEXT={
   survey:'Step 1 of 2 &nbsp;·&nbsp; <b>Survey</b> — spend anchors, then lock the survey to chart it',
   chart:'Step 2 of 2 &nbsp;·&nbsp; <b>Chart</b> — the model proposes, you dispose. Paint, then lock in.',
@@ -787,9 +913,12 @@ function updateMeta(){
   const anchorLine = phase==='survey'
     ? 'Anchors: <b>'+anchors.size+' / '+MAX_ANCHORS+'</b>'
     : 'Survey locked at <b>'+anchors.size+' / '+MAX_ANCHORS+'</b> anchors';
-  el.innerHTML=anchorLine+' &nbsp;·&nbsp; '+note;
+  el.innerHTML=anchorLine+' &nbsp;·&nbsp; '+note+
+    (phase==='survey' && anchors.size ? ' &nbsp;·&nbsp; par <b>'+par+'</b>' : '');
   const ph=document.getElementById('phase');
   if(ph) ph.innerHTML=PHASE_TEXT[phase];
+  const co=document.getElementById('coach');
+  if(co) co.innerHTML=coachLine();
 }
 
 // Which controls belong to the beat the player is in. Reveal is deliberately not
@@ -820,7 +949,8 @@ function showScore(){
   const sv=strokeValue();
   const el=document.getElementById('score');
   el.style.display='block';
-  el.innerHTML=(sv===null ? '' :
+  el.innerHTML='<div class="parline">'+parVerdict()+'</div>'+
+    (sv===null ? '' :
       'Your <b>'+strokes.size+'</b> painted cell'+(strokes.size===1?'':'s')+': '+
       '<b style="color:'+(sv<0?'#b04a4a':'#4d7a4a')+'">'+(sv>=0?'+':'')+sv+'</b> pts against the model\u2019s chart<br>')+
     'Coastline <b>'+(d.acc*100).toFixed(1)+'%</b> correct '+
@@ -844,7 +974,7 @@ function shareText(){
   const url = typeof location==='undefined' ? ''
     : '\n'+(isDaily ? location.origin+location.pathname : location.href);
   return 'Tide Table '+(isDaily ? '#'+dayNumber() : 'seed '+seed)+
-    '  '+anchors.size+'\u2693  '+d.points+' pts\n'+marks+url;
+    '  '+anchors.size+'\u2693  '+d.points+' pts (par '+par+')\n'+marks+url;
 }
 
 function showShare(){
@@ -899,6 +1029,7 @@ if(typeof globalThis!=='undefined'){
     lockSurvey,backToSurvey,resetChart,revealTruth,strokeValue,setBrush,paint,
     getPhase:()=>phase,getProposal:()=>proposal,getStrokeCount:()=>strokes.size,
     getSmooth:()=>predictedSmooth,getTruthSmooth:()=>smoothTruth(),huntBySector,
+    getPar:()=>par,coachLine,weakColumns,sectorsByState,PAR_ANCHORS,
     ROWS,COLS,MAX_ANCHORS,ANCHOR_COST,HUNT_WEIGHT,GAUGE_SECTORS,WATER,SAND,LAND};
 }
 </script>
