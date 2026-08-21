@@ -2,1036 +2,263 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Tide Table — coastline prediction prototype</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reef — find the four reefs</title>
 <style>
   :root{
-    --water:#2f6f96; --sand:#e3cf9a; --land:#5b8a58; --blank:#eef3f6;
-    --line:#cdd9e0; --ink:#1f2a33; --muted:#5b6b76; --accent:#c96a2f;
-    --pw:#a7c6d8; --ps:#f0e6c8; --pl:#adc6a8;
+    --sea:#e8f0f5; --deep:#c3d4de; --ink:#14232e; --muted:#5d7180;
+    --gone:#b9c6cf; --hot:#e8913c; --hit:#2e8b57; --miss:#c9463f; --line:#a9bcc7;
   }
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-       background:#f4f7f9;color:var(--ink);display:flex;flex-direction:column;align-items:center;padding:26px 12px 48px}
-  h1{font-family:Georgia,'Times New Roman',serif;font-weight:600;font-size:27px;margin:0;letter-spacing:.5px}
-  .sub{color:var(--muted);font-size:13px;margin:5px 0 14px;text-align:center;max-width:620px;line-height:1.45}
-  #coach{max-width:640px;margin:0 0 16px;padding:11px 16px;border-radius:8px;text-align:center;
-         background:#fffdf6;border:1px solid #e6dcc0;color:var(--ink);font-size:13.5px;line-height:1.5}
-  #coach b{color:var(--accent)}
-  .wrap{overflow:auto;max-width:100%}
-  #board{display:grid;gap:1px;width:max-content;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;user-select:none;-webkit-user-select:none}
-  .cell{width:20px;height:20px;background:var(--blank);cursor:pointer;position:relative;transition:background .1s}
-  .cell:hover{outline:2px solid rgba(0,0,0,.18);outline-offset:-2px}
-  .cell.w{background:var(--water)} .cell.s{background:var(--sand)} .cell.l{background:var(--land)}
-  .cell.pred-w{background:var(--pw)} .cell.pred-s{background:var(--ps)} .cell.pred-l{background:var(--pl)}
-  .cell.anchor::after{content:'';position:absolute;inset:6px;border-radius:50%;background:#fff;box-shadow:0 0 0 2px rgba(0,0,0,.55)}
-  .cell.anom::before{content:'';position:absolute;inset:1px;border-radius:3px;border:2px dashed #8e44ad}
-  .cell.unsure{filter:saturate(.2) brightness(1.06)}
-  .cell.patch{box-shadow:inset 0 0 0 1px rgba(142,68,173,.35)}
-  .cell.bad{outline:2px solid #d64545;outline-offset:-2px;z-index:1}
-  .cell.miss{outline:2px dotted rgba(214,69,69,.4);outline-offset:-2px}
-  .cell.stroke{box-shadow:inset 0 0 0 2px rgba(31,42,51,.6)}
-  #board.charting .cell{cursor:crosshair}
-  #board.charting .cell.anchor{cursor:not-allowed}
-  #board.revealed .cell{cursor:default}
-  #brushbar{margin:14px 0 0;align-items:center}
-  .brushlabel{color:var(--muted);font-size:12px;letter-spacing:.4px;text-transform:uppercase}
-  button.brush{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;font-size:13px}
-  button.brush.sel{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink);font-weight:600}
-  .phase{font-size:12px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;margin-top:14px}
-  .phase b{color:var(--accent)}
-  #gauge{display:grid;gap:1px;margin-top:8px;width:max-content}
-  .gseg{background:#fff;border:1px solid var(--line);border-radius:5px;padding:5px 2px;text-align:center}
-  .gbig{font-size:17px;font-weight:700;line-height:1.15}
-  .gsub{font-size:9.5px;color:var(--muted);letter-spacing:.3px}
-  .g-open{border-color:#c9a23f;background:#fdf8e8} .g-open .gbig{color:#a97d12}
-  .g-done{border-color:#7fa87c;background:#f0f6ef} .g-done .gbig{color:#4d7a4a}
-  .g-over{border-color:#d08b8b;background:#fbf0f0} .g-over .gbig{color:#b04a4a}
-  .g-empty .gbig{color:#c2cdd4}
-  .glabel{color:var(--muted);font-size:11px;text-align:center;margin-top:6px;line-height:1.5;max-width:620px}
-  .bar{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin:16px 0 6px}
-  button{font:inherit;font-size:14px;padding:8px 14px;border-radius:6px;border:1px solid #b9c6cf;background:#fff;color:var(--ink);cursor:pointer}
-  button:hover{background:#eef3f6}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-  button:disabled{opacity:.45;cursor:default}
-  .meta{color:var(--muted);font-size:13px;margin:4px 0;text-align:center;line-height:1.5}
-  .meta b{color:var(--ink)}
-  #score{display:none;margin-top:10px;font-size:15px;text-align:center;line-height:1.5}
-  #share{display:none;margin-top:14px;text-align:center}
-  #share pre{font-family:inherit;font-size:14px;line-height:1.5;margin:0 0 8px;letter-spacing:1px}
-  #score .big{font-size:28px;font-weight:700;color:var(--accent)}
-  #score .parline{font-size:16px;margin-bottom:8px}
-  .legend{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:14px;color:var(--muted);font-size:12px}
-  .legend span{display:inline-flex;align-items:center;gap:5px}
-  .sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+    background:#f2f7fa;color:var(--ink);display:flex;flex-direction:column;align-items:center;
+    padding:20px 12px 40px;-webkit-text-size-adjust:100%}
+  h1{font-family:Georgia,serif;font-size:26px;margin:0 0 2px;letter-spacing:.5px}
+  .goal{font-size:15px;color:var(--muted);margin-bottom:16px}
+  #board{display:grid;gap:2px;background:var(--line);border:2px solid var(--line);
+    border-radius:8px;overflow:hidden;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+  .c{width:38px;height:38px;background:var(--sea);display:flex;align-items:center;justify-content:center;
+    font-size:16px;font-weight:700;color:var(--ink);cursor:pointer;position:relative}
+  .c.out{background:var(--gone);cursor:default;color:#8fa0ab}
+  .c.r1{background:#fbe9d2} .c.r2{background:#f6cf9d} .c.r3{background:#efb069}
+  .c.ping{background:var(--deep);color:#123;cursor:default}
+  .c.mark::after{content:'';position:absolute;width:16px;height:16px;border-radius:50%;
+    background:#fff;border:3px solid var(--hot)}
+  .c.reef{background:var(--hit);color:#fff}
+  .c.reef::after{content:'';position:absolute;width:14px;height:14px;border-radius:50%;background:#fff}
+  .c.wrong::after{border-color:var(--miss)}
+  .bar{display:flex;gap:8px;margin:16px 0 10px;flex-wrap:wrap;justify-content:center}
+  button{font:inherit;font-size:15px;padding:10px 16px;border-radius:8px;border:1px solid #aebfc9;
+    background:#fff;color:var(--ink);cursor:pointer}
+  button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  button.go{background:var(--hot);border-color:var(--hot);color:#fff;font-weight:600}
+  button:disabled{opacity:.4;cursor:default}
+  .counts{display:flex;gap:22px;font-size:15px;margin-bottom:12px}
+  .counts b{font-size:19px}
+  #result{font-size:19px;font-weight:600;margin-top:14px;text-align:center;min-height:26px}
+  #tip{font-size:14px;color:var(--muted);margin-top:8px;text-align:center;max-width:430px;min-height:20px}
+  #teach{display:none;margin-top:14px;padding:14px 18px;border-radius:10px;max-width:452px;
+    background:#fff5e8;border:2px solid var(--hot);text-align:center}
+  #teach.show{display:block}
+  #teach p{margin:0;font-size:15.5px;line-height:1.5}
+  #teach .step{font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+  #teach button{margin-top:12px;padding:8px 15px;font-size:14px}
+  #teach.waiting button{display:none}
+  .pointer{outline:3px solid var(--hot);outline-offset:-3px;animation:pulse 1s infinite}
+  @keyframes pulse{50%{outline-color:transparent}}
 </style>
 </head>
 <body>
-  <h1>Tide Table</h1>
-  <div class="sub">Find the hidden coastline. <b>Measure</b> a few cells, <b>chart</b> what you think is there, then see how close you came — and whether you beat par.</div>
-  <div id="coach"></div>
-  <div class="wrap">
-    <div id="board"></div>
-    <div id="gauge"></div>
+  <h1>Reef</h1>
+  <div class="goal">Four reefs are hidden. Find them.</div>
+  <div class="counts">
+    <span>Pings left <b id="nping">10</b></span>
+    <span>Reefs marked <b id="nmark">0</b> / 4</span>
   </div>
-  <div class="glabel">Tide gauge — cells along each stretch of coast that no smooth coastline can explain.<br>Amber: still unfound. Red: your chart invents an exception that is not there.<br>It counts <em>how much</em> is hidden in a stretch, never where in it — closing a reading is not the same as charting the thing correctly.</div>
-  <div class="phase" id="phase"></div>
-  <div class="bar" id="brushbar">
-    <span class="brushlabel">Brush</span>
-    <button class="brush" data-tile="0"><span class="sw" style="background:var(--water)"></span>Water</button>
-    <button class="brush" data-tile="1"><span class="sw" style="background:var(--sand)"></span>Sand</button>
-    <button class="brush" data-tile="2"><span class="sw" style="background:var(--land)"></span>Land</button>
-    <button class="brush" data-tile="-1">Revert to model</button>
+  <div id="board"></div>
+  <div id="teach">
+    <div class="step" id="cstep"></div>
+    <p id="ctext"></p>
+    <button id="cnext" class="go">Next</button>
+    <button id="cskip">Skip</button>
+  </div>
+  <div id="tip"></div>
+  <div class="bar">
+    <button id="mping" class="on">Ping</button>
+    <button id="mmark">Mark reef</button>
+    <button id="reveal" class="go">Reveal</button>
   </div>
   <div class="bar">
-    <button id="lock" class="primary">Lock survey &rarr; chart it</button>
-    <button id="reveal" class="primary">Lock in &amp; reveal</button>
-    <button id="back">Back to survey</button>
-    <button id="resetchart">Reset to the model's chart</button>
-    <button id="clear">Clear anchors</button>
-    <button id="new">New coastline</button>
-    <button id="today">Today's coastline</button>
+    <button id="again">New board</button>
+    <button id="howto">How to play</button>
   </div>
-  <div class="meta" id="meta"></div>
-  <div id="score"></div>
-  <div id="share"></div>
-  <div class="legend">
-    <span><span class="sw" style="background:var(--water)"></span>Water</span>
-    <span><span class="sw" style="background:var(--sand)"></span>Sand</span>
-    <span><span class="sw" style="background:var(--land)"></span>Land</span>
-    <span><span class="sw" style="background:#fff;box-shadow:0 0 0 1px #888"></span>Anchor (surveyed)</span>
-    <span><span class="sw" style="background:var(--ps)"></span>Prediction (live)</span>
-    <span><span class="sw" style="background:#eceff1"></span>Guesswork (no anchor near)</span>
-    <span><span class="sw" style="background:#fff;box-shadow:0 0 0 2px #8e44ad"></span>Anomaly (model carved an exception)</span>
-    <span><span class="sw" style="background:#fff;box-shadow:inset 0 0 0 2px rgba(31,42,51,.6)"></span>Your brushstroke</span>
-    <span><span class="sw" style="background:#d64545"></span>Wrong prediction</span>
-  </div>
+  <div id="result"></div>
 
 <script>
 "use strict";
-const COLS=30, ROWS=16, MAX_ANCHORS=12;
-const WATER=0, SAND=1, LAND=2;
-const TILE_CLS=['w','s','l'];
+var COLS=12, ROWS=8, REEFS=4, PINGS=10, SEP=2;
+var N=COLS*ROWS;
 
-const BAND=0.9;        // |row - sea level| <= BAND is sand; beyond it, water below / land above
-const SIG_MAX=5.0;     // how far one anchor's evidence carries when the coast is barely surveyed
-const SIG_MIN=1.15;    // ...and once it is densely surveyed: fine detail stops being smoothed away
-const SIG_K=0.8;
-const WBASE=0.30;      // pull toward a flat mid-grid coast where nothing has been surveyed
-const FIT_ITERS=6;     // robust-fit relaxation passes
-const OUTLIER_TOL=1.4; // rows of contradiction before an anchor is read as an anomaly
-const CONF_MIN=0.35;   // corroboration needed from other anchors before we believe it is one
-const CONF_SIGMA=4.0;  // ...measured over a fixed radius: "is there other evidence near this column"
-                       // is a different question from how far one measurement generalises
-const PATCH_CORE=2.2, PATCH_RING=2.9;   // fallback disc, where the instrument says nothing
-const PATCH_SPAN=5;    // how far either side of an anchor one anomaly can reach
-const RAD_SCALE=1.00;  // the gauge counts a blob's sand fringe too, so its area overstates the blob
-const CORE_FRAC=0.70;  // an anomaly's solid core, as a fraction of the footprint the gauge counts
-const ANCHOR_COST=0.04;
-const HUNT_WEIGHT=0.45;  // share of the score that comes from the hunt rather than from the coastline
-const HUNT_INVENT=0.25;  // what an exception carved where there is nothing costs, per footprint cell
-const SUPPORT_MIN=0.45; // below this a column is a guess, and the board says so
-const GAUGE_SECTORS=5;  // the tide gauge reports separately for each stretch of coast
-const PAR_ANCHORS=5;    // the reference survey the board asks you to beat
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function xy(i){return [i%COLS,(i/COLS)|0];}
+function dist(a,b){var p=xy(a),q=xy(b);return Math.max(Math.abs(p[0]-q[0]),Math.abs(p[1]-q[1]));}
 
-function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+var seed=0, reefs=[], pings=new Map(), marks=new Set(), done=false, mode='ping';
 
-let par=0;
-let seed=0, rng=mulberry32(seed), isDaily=false;
-let trueSeaFn=null;
-let support=[], truth=[], truthAnomalies=[], anchors=new Map(), predicted=null, predictedSmooth=null, anomalies=[];
-
-/* ---- the three beats --------------------------------------------------------
-The live preview meant the player never committed to anything: they watched a
-machine interpolate and then pressed a button, and the title verb belonged to the
-algorithm. Play is now split in two, with a lock-in between.
-
-  survey  - spend anchors. The model redraws live. Information, and nothing else.
-  chart   - anchors freeze. The model's coast becomes a *proposal* and the player
-            paints over it. This is the prediction, and it is the player's.
-  reveal  - the truth, scored against whatever the player locked in.
-
-The strokes are kept apart from the proposal rather than baked into a grid copy,
-so a stroke that merely agrees with the model is not a stroke at all - which is
-what makes "paint nothing and you score exactly what the model scored" exact
-rather than approximate.
---------------------------------------------------------------------------- */
-let phase='survey', proposal=null, strokes=new Map(), brush=SAND, dragging=false;
-
-// Fixed for the map, and previously rebuilt inside the fit's inner loop.
-let _smoothTruth=null, _unexTruth=null, _blind=null;
-function smoothTruth(){ return _smoothTruth || (_smoothTruth=buildGrid(trueSeaFn)); }
-function unexTruth(){ return _unexTruth || (_unexTruth=unexplainedCells(truth,smoothTruth())); }
-function blindChart(){ return _blind || (_blind=buildGrid(fitSea([]).level)); }
-
-// Day number since the epoch, in the player's own timezone: everyone gets the
-// same coastline on the same date without a server deciding what "today" is.
-function dayNumber(d){
-  d=d||new Date();
-  return Math.floor(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())/86400000);
-}
-function dailySeed(){ return (dayNumber()*2654435761)>>>0; }
-
-function generate(s){
-  seed = (s===undefined || s===null) ? (Math.random()*1e9)|0 : (s>>>0);
-  isDaily = (seed===dailySeed());
-  rng=mulberry32(seed);
-  const p1=rng()*Math.PI*2, p2=rng()*Math.PI*2, p3=rng()*Math.PI*2;
-  trueSeaFn = c => ROWS*0.5 + 2.2*Math.sin(0.25*c+p1) + 1.2*Math.sin(0.11*c+p2) + 0.7*Math.sin(0.50*c+p3);
-  _smoothTruth=null; _unexTruth=null; _blind=null;   // all three are functions of trueSeaFn
-  truth=buildGrid(trueSeaFn);
-  plantAnomalies();
-  par=computePar();
-  anchors=new Map();
-  predicted=null;
-  predictedSmooth=null;
-  anomalies=[];
-  support=[];
-  phase='survey';
-  proposal=null;
-  strokes=new Map();
-  render();
-  updateMeta();
-  renderGauge();
-  const el=document.getElementById('score'); if(el) el.style.display='none';
-  const sh=document.getElementById('share'); if(sh) sh.style.display='none';
-  syncBar();
-  writeUrl();
-}
-
-function writeUrl(){
-  if(typeof history==='undefined' || !history.replaceState) return;
-  try{ history.replaceState(null,'', isDaily ? location.pathname : location.pathname+'?seed='+seed); }catch(e){}
-}
-
-/* ---- par ---------------------------------------------------------------------
-A score of 267 means nothing on its own: nothing on the board said what a good
-number looked like, so there was nothing to get better at, and a hard map was
-indistinguishable from a broken one. Par fixes both. It is what a reference
-survey scores *on this same map* - walk the coast at five evenly spaced columns
-and stop - so it moves with the map's difficulty and asks a question the player
-can act on: can you do better than just walking the coast?
-
-Five is chosen by measurement, not taste. Over 500 maps it is the most
-discriminating of the candidates: grinding 11 anchors along the coast clears it
-only 57% of the time, a survey that finds the anomalies clears it 87%, and
-locking in the blind guess clears it never. Par therefore rewards the strategy
-the game is about rather than sheer spend.
---------------------------------------------------------------------------- */
-function computePar(){
-  anchors=new Map();
-  // Half-offset, so the five sit centred in their fifths (3, 9, 15, 21, 27)
-  // rather than flush left with the last sixth of the map unsurveyed and one
-  // anchor stranded on the extrapolating edge.
-  for(let i=0;i<PAR_ANCHORS;i++){
-    const c=Math.round((i+0.5)*COLS/PAR_ANCHORS);
-    for(let r=0;r<ROWS;r++) if(truth[r][c]===SAND){ anchors.set(r+','+c,SAND); break; }
+// Reefs sit off the rim and at least SEP apart, so two of them never hide behind
+// one reading.
+function build(s){
+  seed = (s===undefined||s===null) ? (Math.random()*1e9)|0 : (s>>>0);
+  var rng=mulberry32(seed), ok=[];
+  for(var i=0;i<N;i++){ var p=xy(i);
+    if(p[0]>=1&&p[1]>=1&&p[0]<=COLS-2&&p[1]<=ROWS-2) ok.push(i); }
+  reefs=[]; var guard=0;
+  while(reefs.length<REEFS && guard++<9000){
+    var c=ok[Math.floor(rng()*ok.length)];
+    var clash=false;
+    for(var k=0;k<reefs.length;k++) if(dist(c,reefs[k])<SEP) clash=true;
+    if(!clash) reefs.push(c);
   }
-  predict();
-  const pts=scoreDetail().points;
-  anchors=new Map();               // generate() clears the rest a few lines below
-  return pts;
+  pings=new Map(); marks=new Set(); done=false; setMode('ping');
+  document.getElementById('result').textContent='';
+  draw();
 }
 
-function buildGrid(seaFn){
-  const g=[];
-  for(let r=0;r<ROWS;r++){ g[r]=[]; for(let c=0;c<COLS;c++){
-    const d=r-seaFn(c);
-    g[r][c] = d>BAND ? WATER : (d<-BAND ? LAND : SAND);
-  }}
-  return g;
+// A ping reports how far the nearest reef is. That is the whole rule.
+function reading(i){
+  var best=99;
+  for(var k=0;k<reefs.length;k++) best=Math.min(best,dist(i,reefs[k]));
+  return best;
 }
 
-// How many anomalies a map holds is itself hidden. Always planting exactly two
-// let you count to two and stop; not knowing is what makes the last few anchors
-// a decision - and it is why the gauge has to be readable before you spend
-// anything, because on a clear map the right move is to spend nothing.
-const ANOMALY_COUNTS=[0,1,1,2,2,2,3,3,4];
-
-function plantAnomalies(){
-  truthAnomalies=[];
-  const want=ANOMALY_COUNTS[Math.floor(rng()*ANOMALY_COUNTS.length)];
-  let tries=0;
-  while(truthAnomalies.length<want && tries<600){
-    tries++;
-    const cr=3+Math.floor(rng()*(ROWS-6));
-    const cc=3+Math.floor(rng()*(COLS-6));
-    const d=cr-trueSeaFn(cc);
-    // keep them apart, or two overlapping blobs read as one feature
-    if(truthAnomalies.some(a=>Math.hypot(cc-a.c,cr-a.r)<5)) continue;
-    if(d<-2.2){ applyPatch(truth,cr,cc,2.0,3.1,WATER,SAND); truthAnomalies.push({r:cr,c:cc,tile:WATER,kind:'lake'}); }
-    else if(d>0.6 && d<2.0){ applyPatch(truth,cr,cc,1.8,2.9,LAND,SAND); truthAnomalies.push({r:cr,c:cc,tile:LAND,kind:'headland'}); }
-  }
-}
-
-function applyPatch(grid,cr,cc,coreR,ringR,coreTile,ringTile){
-  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
-    const d=Math.hypot(c-cc,r-cr);
-    if(d<=coreR) grid[r][c]=coreTile;
-    else if(d<=ringR && grid[r][c]!==coreTile) grid[r][c]=ringTile;
-  }
-}
-
-/* ---- prediction -----------------------------------------------------------
-An anchor constrains the sea level in its column, but not all anchors say the
-same kind of thing. Sand pins the level to its row. Water and land only bound it
-- a cell of deep water means "the coast is somewhere above here" and nothing
-more, so it must not be read as a measurement of where the coast actually is.
-
-The global curve is then fit only from the anchors that agree with each other.
-An anchor the rest of the evidence contradicts is not evidence about sea level
-at all: it is a lake or a headland. Bending the coastline to reach it would wreck
-the fit for ten columns either side, so instead it is dropped from the fit and
-becomes a local patch. Corroboration is required before we believe it (CONF_MIN):
-one lone surprising anchor is indistinguishable from a coast that simply runs
-higher than the prior, so it takes a neighbour to tell those apart.
---------------------------------------------------------------------------- */
-
-function avg(a){ return a.reduce(function(x,y){return x+y;},0)/a.length; }
-
-function anchorList(){
-  const out=[];
-  for(const [key,tile] of anchors){
-    const p=key.split(',');
-    out.push({r:+p[0], c:+p[1], tile:tile});
-  }
-  return out;
-}
-
-// Every anchor is an interval constraint on the sea level in its column - exactly
-// the inverse of the threshold that built the grid. Note how little the extremes
-// say: a cell of deep water only means "the coast is somewhere above here".
-//   water at row r  ->  sea <= r - BAND
-//   sand  at row r  ->  r - BAND <= sea <= r + BAND
-//   land  at row r  ->  sea >= r + BAND
-function boundsOf(a){
-  if(a.tile===WATER) return [-Infinity, a.r-BAND];
-  if(a.tile===LAND)  return [a.r+BAND, Infinity];
-  return [a.r-BAND, a.r+BAND];
-}
-
-// Where this anchor wants the level, given what everything else says. Sand is a
-// measurement, so it pulls to the middle of its interval - its best point estimate.
-// Water and land are only barriers: they pull the consensus back to the edge of
-// what they permit, and say nothing at all while it stays inside.
-function pullOf(a,level){
-  if(a.tile===SAND) return a.r;
-  const b=boundsOf(a);
-  return Math.min(Math.max(level,b[0]),b[1]);
-}
-
-// distance from the consensus to the nearest level this anchor would permit
-function violation(a,level){
-  const b=boundsOf(a);
-  return Math.abs(level-Math.min(Math.max(level,b[0]),b[1]));
-}
-
-// Bandwidth follows the survey: sparse anchors can only justify a broad, smooth
-// coast, but once you have sampled densely the model should stop blurring away the
-// detail you paid for.
-function bandwidth(n){ return Math.max(SIG_MIN, Math.min(SIG_MAX, COLS/(SIG_K*Math.max(1,n)))); }
-function kern(c1,c2,sig){ return Math.exp(-((c1-c2)*(c1-c2))/(2*sig*sig)); }
-
-function fitSea(list){
-  const sig=bandwidth(list.length);
-  const lv=list.map(a=>pullOf(a,ROWS*0.5));
-  const w=list.map(()=>1);
-  // Sea level at column c, optionally leaving one anchor out of the vote.
-  // Locally linear rather than a plain weighted average: an average sags back
-  // toward the prior between anchors, which throws away the shape of the coast
-  // exactly where there is no anchor to hold it up.
-  const at=(c,skip)=>{
-    let S0=WBASE,S1=0,S2=0,T0=ROWS*0.5*WBASE,T1=0;
-    for(let i=0;i<list.length;i++){
-      if(i===skip) continue;
-      const k=kern(c,list[i].c,sig)*w[i];
-      if(k<1e-6) continue;
-      const x=list[i].c-c, y=lv[i];
-      S0+=k; S1+=k*x; S2+=k*x*x; T0+=k*y; T1+=k*x*y;
-    }
-    const den=S0*S2-S1*S1;
-    const est = Math.abs(den)<1e-9 ? T0/S0 : (T0*S2-T1*S1)/den;
-    return Math.max(-2,Math.min(ROWS+2,est));
-  };
-  // how much corroboration column c has from anchors other than `skip`
-  const conf=(c,skip)=>{
-    let den=0;
-    for(let i=0;i<list.length;i++) if(i!==skip) den+=kern(c,list[i].c,CONF_SIGMA)*w[i];
-    return den;
-  };
-  for(let it=0;it<FIT_ITERS;it++){
-    const loo=list.map((a,i)=>at(a.c,i));
-    for(let i=0;i<list.length;i++){
-      // A lone surprising anchor is normally ambiguous - it could just be a coast
-      // running higher than expected - so it needs a neighbour to agree before we
-      // carve an exception. But the tide gauge is an independent witness: where it
-      // reports something unexplained, one contradicting anchor is already enough,
-      // and where it reports nothing, the neighbour is still required.
-      const contradicted = violation(list[i],loo[i])>OUTLIER_TOL &&
-        (conf(list[i].c,i)>=CONF_MIN || surveyFlags(list[i].c));
-      w[i] = contradicted ? 0 : 1;
-      lv[i] = pullOf(list[i],loo[i]);
-    }
-  }
-  return {
-    level: c=>at(c,-1),
-    support: c=>conf(c,-1),          // how much evidence stands behind this column
-    outliers: list.filter((a,i)=>w[i]===0)
-  };
-}
-
-/* Placing an exception ---------------------------------------------------------
-A single anchor tells you one cell of a blob and nothing about its shape, so
-centring a fixed disc on it puts the patch wherever the anchor happened to land -
-usually off to one side. It closed only about a third of the gauge even when the
-anchor sat exactly on the anomaly's centre.
-
-But the instrument already knows the horizontal shape: the run of columns it
-reports around the anchor is the anomaly's width, and the cells it counts across
-that run are its area. What the gauge cannot give is the row - a column tally
-says nothing about height. That is exactly what the anchor is for. So take the
-column extent and the size from the instrument, and the row from the anchors,
-averaging them when more than one landed on the same feature.
---------------------------------------------------------------------------- */
-function patchesFor(outliers){
-  const t=unexTruth();
-
-  // Anchors on the same feature - same tile, a few columns apart - are one find.
-  const feats=[];
-  for(const a of outliers){
-    if(!t[a.c]) continue;                       // the instrument reports nothing here
-    let f=null;
-    for(const g of feats) if(g.tile===a.tile && Math.abs(g.col-a.c)<=3){ f=g; break; }
-    if(f){ f.rows.push(a.r); f.cols.push(a.c); f.col=avg(f.cols); }
-    else feats.push({tile:a.tile, rows:[a.r], cols:[a.c], col:a.c});
-  }
-
-  const out=[];
-  for(const f of feats){
-    // Two anomalies sitting near each other share one unbroken run of columns -
-    // it happens on about half of all maps - so a feature may not have the run to
-    // itself. Take only the columns nearer to this feature than to any other, and
-    // no further out than one blob's reach, or a single anchor swallows its
-    // neighbour and the patch matches neither.
-    let area=0, moment=0;
-    const lo=Math.max(0,Math.round(f.col)-PATCH_SPAN), hi=Math.min(COLS-1,Math.round(f.col)+PATCH_SPAN);
-    for(let c=lo;c<=hi;c++){
-      if(t[c]<=0) continue;
-      let nearest=f;
-      for(const g of feats) if(Math.abs(g.col-c)<Math.abs(nearest.col-c)) nearest=g;
-      if(nearest!==f) continue;
-      area+=t[c]; moment+=c*t[c];
-    }
-    if(area<=0) continue;
-    // Centroid of the profile, not the midpoint of the columns: an edge column is
-    // only clipped by the blob and would drag a midpoint sideways. Radius from the
-    // area, for the same reason - a column holding one cell is not a column
-    // holding six. The row is the one thing a column tally cannot give, so it
-    // comes from the anchors.
-    out.push({cr:avg(f.rows), cc:moment/area, rad:RAD_SCALE*Math.sqrt(area/Math.PI), tile:f.tile});
-  }
-  return out;
-}
-
-function applyShapedPatch(grid,p){
-  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
-    const d=Math.hypot(c-p.cc,r-p.cr);
-    if(d<=p.rad*CORE_FRAC) grid[r][c]=p.tile;
-    else if(d<=p.rad && grid[r][c]!==p.tile) grid[r][c]=SAND;
-  }
-}
-
-function predict(){
-  const list=anchorList();
-  const fit=fitSea(list);
-  // The fit already knows where it is guessing. Showing it turns the board into
-  // the strategy: a pale column is one your next anchor is worth spending on.
-  support=[];
-  for(let c=0;c<COLS;c++) support[c]=fit.support(c);
-  const pred=buildGrid(fit.level);
-  predictedSmooth=buildGrid(fit.level);   // the same coast without the exceptions, for the gauge
-  const patches=patchesFor(fit.outliers);
-  for(const p of patches) applyShapedPatch(pred,p);
-  // any outlier the instrument does not corroborate still gets the old blind disc
-  for(const a of fit.outliers)
-    if(!patches.some(p=>Math.abs(a.c-p.cc)<=p.rad))
-      applyPatch(pred,a.r,a.c,PATCH_CORE,PATCH_RING,a.tile,SAND);
-  for(const a of list) pred[a.r][a.c]=a.tile;
-  predicted=pred;
-  anomalies=fit.outliers;
-  return pred;
-}
-
-function isAnomaly(r,c){
-  for(const a of anomalies) if(a.r===r && a.c===c) return true;
+// Everything closer to a ping than its reading is empty for certain. That single
+// fact is what makes this deducible rather than a guessing game.
+function ruledOut(i){
+  var it=pings.entries(), e;
+  while(!(e=it.next()).done) if(dist(i,e.value[0])<e.value[1]) return true;
   return false;
 }
-
-function inPatch(r,c){
-  for(const a of anomalies) if(Math.hypot(c-a.c,r-a.r)<=PATCH_RING) return true;
-  return false;
-}
-
-/* ---- the tide gauge ---------------------------------------------------------
-A survey instrument, not an anchor: it costs nothing and is readable from the
-start. It counts the cells a smooth coastline cannot account for - which is
-exactly the anomaly footprint, and nothing else, because everything else on the
-map is a smooth coast by construction. Your side of the reading is the same
-measurement taken against your own fit: how many cells your chart explains with
-a carved exception rather than with the coastline.
-
-Measuring it this way matters. A water or sand tally would be swamped by the
-error in your own coastline fit, which runs to +/-30 cells and drowns an anomaly
-worth 20; this quantity is invariant to where your coast sits.
-
-It reports by sector rather than as one number. A single total tells you that
-something is out there but never where, which leaves you probing blind - and
-blind probing is worth so little that the anchors it costs beat the anchors it
-saves.
---------------------------------------------------------------------------- */
-
-// per column, how many cells this grid holds that its own smooth coast does not explain
-function unexplainedCells(grid,smooth){
-  const per=new Array(COLS).fill(0);
-  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++)
-    if(grid[r][c]!==smooth[r][c]) per[c]++;
-  return per;
-}
-
-// Does the instrument itself report something unexplained in this column's sector?
-// This reads only the truth side of the gauge, so it is fixed for the map and
-// independent of any prediction - no circularity with the fit below.
-function surveyFlags(c){
-  const t=unexTruth();
-  const w=Math.ceil(COLS/GAUGE_SECTORS), s=Math.floor(c/w);
-  let n=0;
-  for(let i=s*w;i<Math.min(COLS,(s+1)*w);i++) n+=t[i];
-  return n>0;
-}
-
-// what the gauge shows: per sector, what the survey counted against what your chart accounts for
-function gauge(chart){
-  chart=chart||predicted;
-  const t=unexTruth();
-  const p=(chart&&predictedSmooth) ? unexplainedCells(chart,predictedSmooth) : new Array(COLS).fill(0);
-  const w=Math.ceil(COLS/GAUGE_SECTORS), out=[];
-  for(let s=0;s<GAUGE_SECTORS;s++){
-    const from=s*w, to=Math.min(COLS,(s+1)*w);
-    if(from>=to) continue;
-    let surveyed=0, charted=0;
-    for(let c=from;c<to;c++){ surveyed+=t[c]; charted+=p[c]; }
-    out.push({from:from,to:to,surveyed:surveyed,charted:charted,short:Math.max(0,surveyed-charted)});
-  }
-  return out;
-}
-
-function coastMask(){
-  const m=[];
-  for(let r=0;r<ROWS;r++) m[r]=new Array(COLS).fill(false);
-  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
-    if(truth[r][c]!==SAND) continue;
-    for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
-      const rr=r+dr, cc=c+dc;
-      if(rr>=0&&rr<ROWS&&cc>=0&&cc<COLS) m[rr][cc]=true;
-    }
-  }
-  return m;
-}
-
-// The prediction the model would have made with no survey at all. A flat coast
-// through the middle of the grid already scores ~62% on its own, so an absolute
-// percentage mostly measures the map, not the player: everything is scored as
-// lift above this.
-function baselineScore(){
-  const flat=blindChart();
-  const m=coastMask();
-  let sum=0,cnt=0;
-  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
-    if(!m[r][c]) continue;
-    const d=Math.abs(flat[r][c]-truth[r][c]);
-    sum += d===0?1 : d===1?0.4 : 0;
-    cnt++;
-  }
-  return cnt? sum/cnt : 0;
-}
-
-/* ---- scoring the hunt --------------------------------------------------------
-Coastline accuracy alone barely moves when you find a lake - a lake is only ~20
-cells of a 195-cell band - so a survey that solves the map and one that ignores
-the anomalies came out nearly level. They should not, hence a term of its own.
-
-**The first version of this term counted cells, and that was wrong.** It asked
-how many exception cells your chart carved in each sector, against how many were
-hidden there, and never asked whether they were in the right place. Two things
-fall out of that, both measured:
-
-- Walking the coast with 11 anchors carves ~48 exception cells, only half of them
-  on a real anomaly - and scored 65% of the hunt, against 54% for a survey that
-  anchored every anomaly on the map. The term meant to reward hunting rewarded
-  grinding more.
-- Once the player holds a brush it stops being a scoring quirk and becomes the
-  whole game: painting the gauge's own reported count into its own reported
-  sector, from zero anchors and zero information, scored 586 points against 498
-  for anchoring every real anomaly.
-
-So the hunt is scored the way the coastline half already is: as lift above the
-blind guess, with the same tiered credit, measured over the cells the anomalies
-actually occupy. Painting in the wrong place now earns nothing there and costs
-in the coastline term, which is where a wrong cell belongs.
---------------------------------------------------------------------------- */
-
-// same tiered credit the coastline is scored with: exact, one tier out, or wrong side
-function tierCredit(a,b){ const d=Math.abs(a-b); return d===0?1:d===1?0.4:0; }
-
-function huntScore(chart){
-  chart=chart||predicted;
-  if(!chart) return null;
-  const st=smoothTruth();
-  let n=0, raw=0, base=0;
-  const blind=blindChart();
-  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
-    if(truth[r][c]===st[r][c]) continue;      // not part of the footprint
-    n++;
-    raw  += tierCredit(chart[r][c],truth[r][c]);
-    base += tierCredit(blind[r][c],truth[r][c]);
-  }
-  if(n===0) return null;                      // nothing hidden here: there is no hunt to score
-  raw/=n; base/=n;
-  if(base>=1) return null;                    // the blind guess already had it: no lift to win
-  const lift=Math.max(0,(raw-base)/(1-base));
-  // an exception carved where there is nothing is charted coastline that is not
-  // there; the coastline term already pays for it, so this only has to stop the
-  // brush from buying hunt credit with noise
-  // An exception counts as invented only if it is also *wrong*. Your smooth coast
-  // is an estimate of the true one, so a stroke that departs from it and lands on
-  // the truth is a coastline correction, not a phantom anomaly - and a cell you
-  // measured can never be either.
-  let invented=0;
-  if(predictedSmooth) for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++)
-    if(chart[r][c]!==predictedSmooth[r][c] && truth[r][c]===st[r][c]
-       && chart[r][c]!==truth[r][c] && !anchors.has(r+','+c)) invented++;
-  return Math.max(0,Math.min(1,lift-HUNT_INVENT*invented/n));
-}
-
-/* Per sector, how much of what was hidden there the chart actually got right.
-Read only after the reveal. During play this is exactly the information the
-counting gauge is careful *not* to give: it would tell the player their patch is
-in the wrong place, which is what the anchors are for. */
-function huntBySector(chart){
-  chart=chart||predicted;
-  const st=smoothTruth(), w=Math.ceil(COLS/GAUGE_SECTORS), out=[];
-  for(let s=0;s<GAUGE_SECTORS;s++){
-    const from=s*w, to=Math.min(COLS,(s+1)*w);
-    if(from>=to) continue;
-    let total=0, got=0, invented=0;
-    for(let r=0;r<ROWS;r++) for(let c=from;c<to;c++){
-      const hidden = truth[r][c]!==st[r][c];
-      if(hidden){ total++; if(chart) got+=tierCredit(chart[r][c],truth[r][c]); }
-      else if(chart && predictedSmooth && chart[r][c]!==predictedSmooth[r][c]
-              && chart[r][c]!==truth[r][c] && !anchors.has(r+','+c)) invented++;
-    }
-    out.push({from:from,to:to,total:total,got:got,invented:invented});
-  }
-  return out;
-}
-
-function scoreDetail(chart){
-  const acc=coastlineScore(chart), base=baselineScore();
-  const lift = base>=1 ? 0 : Math.max(0,(acc-base)/(1-base));
-  // On a map that hides nothing the hunt is not worth full marks for free - it
-  // simply is not part of the score, and the coastline carries all of it.
-  const hunt = huntScore(chart);
-  const total = hunt===null ? lift : (1-HUNT_WEIGHT)*lift + HUNT_WEIGHT*hunt;
-  const eff = 1+(MAX_ANCHORS-anchors.size)*ANCHOR_COST;
-  return {acc,base,lift,hunt,total,eff,points:Math.round(total*eff*1000)};
-}
-
-function coastlineScore(chart){
-  chart=chart||predicted;
-  if(!chart) return 0;
-  const m=coastMask();
-  let sum=0, cnt=0;
-  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
-    if(!m[r][c]) continue;
-    const d=Math.abs(chart[r][c]-truth[r][c]);
-    sum += d===0?1 : d===1?0.4 : 0;
-    cnt++;
-  }
-  return cnt? sum/cnt : 0;
-}
-
-function onClick(r,c){
-  if(phase!=='survey') return;
-  const key=r+','+c;
-  if(anchors.has(key)) anchors.delete(key);
-  else if(anchors.size<MAX_ANCHORS) anchors.set(key,truth[r][c]);
-  else return;
-  if(anchors.size>0) predict();
-  else { predicted=null; predictedSmooth=null; anomalies=[]; support=[]; }
-  render();
-  updateMeta();
-  renderGauge();
-}
-
-// The commitment beat. The model's coast stops being a live readout and becomes
-// a proposal the player owns - including with no anchors at all, where the
-// proposal is simply the blind guess and every cell of the chart is the player's.
-function lockSurvey(){
-  if(phase!=='survey') return;
-  predict();
-  proposal=predicted.map(function(row){return row.slice();});
-  strokes=new Map();
-  phase='chart';
-  render(); updateMeta(); renderGauge(); syncBar();
-}
-
-// Going back reopens the survey, and costs the strokes: a chart drawn against a
-// different set of measurements is a different chart.
-function backToSurvey(){
-  if(phase!=='chart') return;
-  phase='survey'; proposal=null; strokes=new Map();
-  if(anchors.size>0) predict();
-  else { predicted=null; predictedSmooth=null; anomalies=[]; support=[]; }
-  render(); updateMeta(); renderGauge(); syncBar();
-}
-
-// The chart is the proposal with the player's strokes laid over it, and the
-// anchors pinned back on top - a measured cell is not a guess, so it cannot be
-// painted over.
-function applyStrokes(){
-  if(!proposal) return;
-  const g=proposal.map(function(row){return row.slice();});
-  for(const [key,t] of strokes){ const q=key.split(','); g[+q[0]][+q[1]]=t; }
-  for(const a of anchorList()) g[a.r][a.c]=a.tile;
-  predicted=g;
-}
-
-function paint(r,c){
-  if(phase!=='chart' || !proposal) return;
-  const key=r+','+c;
-  if(anchors.has(key)) return;
-  // A stroke that agrees with the proposal is not a stroke. Normalising here is
-  // what makes "paint nothing and you score what the model scored" exact.
-  if(brush<0 || proposal[r][c]===brush) strokes.delete(key);
-  else strokes.set(key,brush);
-  applyStrokes();
-  refreshCell(r,c);
-  renderGauge();
-  updateMeta();
-}
-
-function resetChart(){
-  if(phase!=='chart') return;
-  strokes=new Map();
-  applyStrokes();
-  render(); updateMeta(); renderGauge();
-}
-
-function setBrush(t){ brush=t; syncBar(); }
-
-function onPointer(r,c,down){
-  if(phase==='survey'){ if(down) onClick(r,c); return; }
-  if(phase!=='chart') return;
-  if(down) dragging=true;
-  paint(r,c);
-}
-
-function render(){
-  const board=document.getElementById('board');
-  board.innerHTML='';
-  board.className = phase==='chart' ? 'charting' : (phase==='revealed' ? 'revealed' : '');
-  board.style.gridTemplateColumns='repeat('+COLS+', 20px)';
-  const m=phase==='revealed'?coastMask():null;
-  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
-    const cell=document.createElement('div');
-    cell.className=cellClass(r,c,m);
-    cell.addEventListener('mousedown',function(e){ if(e.button) return; e.preventDefault(); onPointer(r,c,true); });
-    // the button may have been released off-window, where mouseup never reached us
-    cell.addEventListener('mouseenter',function(e){
-      if(!e.buttons){ dragging=false; return; }
-      if(dragging) onPointer(r,c,false);
-    });
-    board.appendChild(cell);
-  }
-}
-
-function cellClass(r,c,mask){
-  const key=r+','+c, t=truth[r][c], cls=['cell'];
-  if(phase==='revealed'){
-    cls.push(TILE_CLS[t]);
-    // only errors inside the scored coast band actually cost anything
-    if(predicted && predicted[r][c]!==t) cls.push(mask&&mask[r][c]?'bad':'miss');
-    if(strokes.has(key)) cls.push('stroke');
-  } else if(anchors.has(key)){
-    cls.push(TILE_CLS[t],'anchor');
-    if(isAnomaly(r,c)) cls.push('anom');
-  } else if(predicted){
-    cls.push('pred-'+TILE_CLS[predicted[r][c]]);
-    // a cell the player has taken over is theirs: the model's own annotations
-    // (its patch, its doubt) no longer describe what is drawn there
-    if(strokes.has(key)) cls.push('stroke');
-    else {
-      if(inPatch(r,c)) cls.push('patch');
-      if((support[c]||0)<SUPPORT_MIN) cls.push('unsure');
-    }
-  }
-  return cls.join(' ');
-}
-
-// Painting a stroke changes one cell, and a full rebuild would drop the element
-// the pointer is currently dragging across.
-function refreshCell(r,c){
-  const board=document.getElementById('board');
-  const el=board && board.children && board.children[r*COLS+c];
-  if(el) el.className=cellClass(r,c,null);
-}
-
-function renderGauge(){
-  const el=document.getElementById('gauge');
-  if(!el) return;
-  const g=gauge();
-  el.style.gridTemplateColumns=g.map(function(x){return ((x.to-x.from)*21)+'px';}).join(' ');
-  el.innerHTML=g.map(function(x){
-    const over=x.charted-x.surveyed;
-    let cls,big,sub;
-    if(x.short>0){ cls='g-open'; big=x.short; sub='of '+x.surveyed+' unfound'; }
-    else if(over>6){ cls='g-over'; big='+'+over; sub='charted, not there'; }
-    else if(x.surveyed===0){ cls='g-empty'; big='--'; sub='clear'; }
-    else { cls='g-done'; big='\u2713'; sub=x.surveyed+' accounted for'; }
-    return '<div class="gseg '+cls+'"><div class="gbig">'+big+'</div><div class="gsub">'+sub+'</div></div>';
-  }).join('');
-}
-
-/* ---- the coach ---------------------------------------------------------------
-The game was legible only to someone who had read DESIGN.md. A new player got a
-blank grid, 120 words of standfirst written in the model's own vocabulary, and an
-instrument reporting "38 of 38 unfound" - none of which says what to click. Five
-versions of scoring work had gone into an economy nobody could perceive.
-
-So: one line, above the board, recomputed on every click, naming the single most
-valuable thing to do next. It deliberately points at marks that are *already on
-the screen* - the washed-out columns, the amber segment - rather than inventing
-new UI, because the job is to teach the board rather than to replace it.
-
-It gives the honest advice, not the flattering one. Probing for anomalies is
-break-even against surveying more coast (-7 pts, 95% CI +/-11, paired over 800
-maps), so the coach says one probe in six lands, instead of sending the player
-hunting because hunting is the interesting mechanic.
---------------------------------------------------------------------------- */
-
-// how many columns the fit has too little evidence to stand behind. A count
-// rather than a stretch, because the count is what shrinks as the player works -
-// and per-click feedback was the thing the board never gave.
-function weakColumns(){
-  let n=0;
-  for(let c=0;c<COLS;c++) if((support[c]||0)<SUPPORT_MIN) n++;
+// ...and each ping says at least one reef sits exactly on its ring. Count the
+// rings a cell sits on and the board draws the deduction for you.
+function ringCount(i){
+  var n=0, it=pings.entries(), e;
+  while(!(e=it.next()).done) if(dist(i,e.value[0])===e.value[1]) n++;
   return n;
 }
 
-// gauge() clamps `short` at zero, so an over-charted sector looks identical to a
-// solved one to anything that reads `short` alone - which is how the coach came to
-// congratulate players sitting under a red segment.
-function sectorsByState(){
-  const g=gauge(), amber=[], red=[];
-  g.forEach(function(x,i){
-    if(x.short>0) amber.push({i:i,g:x});
-    else if(x.charted-x.surveyed>6) red.push({i:i,g:x});
-  });
-  amber.sort(function(a,b){ return b.g.short-a.g.short; });
-  return {amber:amber, red:red, n:g.length};
-}
-const ORDINALS=['1st','2nd','3rd','4th','5th','6th','7th','8th'];
-function segmentName(k,total){
-  return total<=1 ? 'the amber segment'
-    : 'the '+(ORDINALS[k.i]||(k.i+1)+'th')+' segment from the left';
-}
-
-function parVerdict(){
-  const d=scoreDetail().points-par;
-  if(d>0)  return 'You beat par by <b>'+d+'</b>. A five-anchor coastal survey scored '+par+' on this map.';
-  if(d===0) return 'Level with par (<b>'+par+'</b>) \u2014 exactly what a five-anchor coastal survey scores here.';
-  return 'Par was <b>'+par+'</b> and you came in '+(-d)+' behind it. A five-anchor coastal survey beat you on this map.';
-}
-
-function coachLine(){
-  if(phase==='revealed') return parVerdict();
-  if(phase==='chart'){
-    if(!strokes.size) return 'This is the model\u2019s guess, not yours. Where the board looks pale and washed out it is guessing \u2014 paint what you think is really there, or lock it in unchanged and take its answer.';
-    return '<b>'+strokes.size+'</b> cell'+(strokes.size===1?'':'s')+' painted. Lock in when you are happy \u2014 or reset and take the model\u2019s answer back.';
+function draw(){
+  var b=document.getElementById('board');
+  b.style.gridTemplateColumns='repeat('+COLS+',38px)';
+  b.innerHTML='';
+  for(var i=0;i<N;i++){
+    var d=document.createElement('div');
+    d.className='c'; d.dataset.i=i;
+    if(done){
+      if(reefs.indexOf(i)>=0){ d.className='c reef'; }
+      else if(marks.has(i)){ d.className='c wrong mark'; }
+      else if(pings.has(i)){ d.className='c ping'; d.textContent=pings.get(i); }
+      else if(false){}
+      else if(ruledOut(i)) d.className='c out';
+    } else if(pings.has(i)){
+      d.className = pings.get(i)===0 ? 'c ping mark' : 'c ping';
+      d.textContent=pings.get(i);
+    } else if(ruledOut(i)){
+      d.className='c out';
+    } else {
+      var r=ringCount(i);
+      if(r) d.className='c r'+Math.min(3,r);
+      if(marks.has(i)) d.className+=' mark';
+    }
+    d.addEventListener('click', tap);
+    b.appendChild(d);
   }
-  if(!anchors.size)
-    return 'A coastline is hidden in this grid \u2014 sea below it, land above it. <b>Click any cell to measure it.</b> You get 12 measurements, and every one you do not spend is worth 4% more at the end. Par on this map is <b>'+par+'</b>.';
-  const st=sectorsByState(), left=MAX_ANCHORS-anchors.size;
-  // A red segment is worth acting on at any budget, because the fix is to *remove*
-  // an anchor rather than spend one.
-  if(st.red.length){
-    const r=st.red[0];
-    return 'The <b>red segment</b> '+(st.n>1?'('+(ORDINALS[r.i]||(r.i+1)+'th')+' from the left) ':'')+
-      'means your chart has carved an exception that is not there. Click the surprising anchor beneath it to pull it back out \u2014 it is costing you points.';
-  }
-  if(left<=0)
-    return 'All <b>'+MAX_ANCHORS+'</b> measurements are spent, so there is nothing more to buy. <b>Lock the survey in</b> and chart it.';
-  // The coast first: it is 55% of the score and every anchor on it pays. Only
-  // once it is mostly held up is a probe worth considering, and even then the
-  // coach says what the odds actually are.
-  // An anchor the model rejects as an anomaly is a find, but it is not evidence
-  // about the coastline - so the guesswork count does not move, and without
-  // saying why, the coach looks like it ignored the click.
-  const found = anomalies.length
-    ? 'The model rejected '+(anomalies.length===1?'an anchor':anomalies.length+' anchors')+
-      ' as too surprising to be coast and carved '+(anomalies.length===1?'an exception':'exceptions')+
-      ' there \u2014 a good find, but it tells the coastline nothing. '
-    : '';
-  const weak=weakColumns();
-  if(weak>=3)
-    return found+'<b>'+weak+' of '+COLS+' columns</b> are still guesswork \u2014 the pale, washed-out ones, where no anchor is near enough to hold the coast up. Your next anchor buys the most there.';
-  if(st.amber.length)
-    return (weak? 'Only <b>'+weak+'</b> column'+(weak===1?'':'s')+' left guessing. ' : 'Your coast is held up all the way across. ')+
-      '<b>'+segmentName(st.amber[0],st.amber.length).replace(/^the /,'The ')+'</b> hides something no smooth coastline explains \u2014 a lake or a headland. Probe away from the coast beneath it; about one probe in six lands on one.';
-  return 'The coast is supported and the gauge is clear \u2014 there is nothing left to find. <b>Lock the survey in</b> and keep the bonus on your '+left+' unspent anchor'+(left===1?'':'s')+'.';
+  document.getElementById('nping').textContent=PINGS-pings.size;
+  document.getElementById('nmark').textContent=marks.size;
+  document.getElementById('reveal').disabled = done || marks.size===0;
+  hint();
 }
 
-const PHASE_TEXT={
-  survey:'Step 1 of 2 &nbsp;·&nbsp; <b>Survey</b> — spend anchors, then lock the survey to chart it',
-  chart:'Step 2 of 2 &nbsp;·&nbsp; <b>Chart</b> — the model proposes, you dispose. Paint, then lock in.',
-  revealed:'<b>Revealed</b> — this is what you locked in, against what was there'
+function tap(e){
+  if(done) return;
+  var i=+e.currentTarget.dataset.i;
+  if(mode==='mark'){
+    if(pings.has(i)||ruledOut(i)) return;
+    if(marks.has(i)) marks.delete(i);
+    else if(marks.size<REEFS) marks.add(i);
+  } else {
+    if(pings.has(i)||ruledOut(i)||pings.size>=PINGS) return;
+    var d=reading(i);
+    pings.set(i,d);
+    if(d===0 && marks.size<REEFS) marks.add(i);     // pinged it directly: that is a find
+    if(pings.size>=PINGS) setMode('mark');
+  }
+  draw();
+  if(tut.on) tut.check();
+}
+
+function setMode(m){
+  mode=m;
+  document.getElementById('mping').className = m==='ping'?'on':'';
+  document.getElementById('mmark').className = m==='mark'?'on':'';
+}
+
+// One short line. It reacts to the board, and it never explains twice.
+function hint(){
+  var t=document.getElementById('tip');
+  if(tut.on){ t.textContent=''; return; }
+  if(done){ t.textContent=''; return; }
+  if(!pings.size){ t.textContent='Tap a square to ping it.'; return; }
+  if(mode==='mark'){
+    t.textContent = marks.size<REEFS ? 'Tap the squares you think hold reefs.' : 'Ready. Hit Reveal.';
+    return;
+  }
+  var best=0;
+  for(var i=0;i<N;i++) if(!pings.has(i)&&!ruledOut(i)) best=Math.max(best,ringCount(i));
+  if(best>=2){ t.textContent='Darker squares sit on two rings. A reef is probably there.'; return; }
+  if(PINGS-pings.size<=2){ t.textContent='Nearly out of pings. Switch to Mark when you are ready.'; return; }
+  t.textContent='Grey squares are empty for certain. Ping somewhere new.';
+}
+
+function reveal(){
+  done=true; draw();
+  var hit=0; marks.forEach(function(m){ if(reefs.indexOf(m)>=0) hit++; });
+  var msg = hit===REEFS ? 'All four. Clean sweep.'
+    : hit===0 ? 'None of them. The reefs are shown in green.'
+    : 'You found '+hit+' of '+REEFS+'.';
+  document.getElementById('result').textContent = msg+'  ('+pings.size+' pings)';
+}
+
+/* The tutorial is played, not read. Each step waits for the player to actually do
+   the thing before it moves on. */
+var tut={ on:false, i:0,
+  steps:[
+    {step:'The goal', text:'Four reefs are hidden under this water. You have 10 sonar pings to work out where they are.', wait:null},
+    {step:'Step 1', text:'Tap any square to ping it. Go ahead, pick one.', wait:function(){return pings.size>=1;}},
+    {step:'Step 2', text:'That number is how far away the nearest reef is. So every square closer than that is empty. They just went grey.', wait:null},
+    {step:'Step 3', text:'The orange squares are exactly that far away. One of them has a reef on it. Ping somewhere else to narrow it down.', wait:function(){return pings.size>=2;}},
+    {step:'Step 4', text:'Every ping draws a ring, and every ring has a reef somewhere on it. Keep pinging. Squares that land on two rings at once go darker orange, and that is where the reefs are.', wait:null},
+    {step:'One more thing', text:'Small numbers mean you are close. A 0 means you are sitting on a reef. When you have worked it out, hit Mark reef, tap your four squares, then Reveal.', wait:null}
+  ],
+  start:function(){ this.on=true; this.i=0; this.show(); hint(); },
+  show:function(){
+    var s=this.steps[this.i], teach=document.getElementById('teach');
+    if(!s){ this.stop(); return; }
+    document.getElementById('cstep').textContent=s.step;
+    document.getElementById('ctext').textContent = (typeof s.text==='function') ? s.text() : s.text;
+    // a step that waits for a tap shows no button: the board is the button
+    teach.className = s.wait ? 'show waiting' : 'show';
+  },
+  next:function(){ this.i++; this.show(); },
+  check:function(){
+    var s=this.steps[this.i];
+    if(s && s.wait && s.wait()){ this.i++; this.show(); }
+  },
+  stop:function(){ this.on=false;
+    document.getElementById('teach').className='';
+    try{ localStorage.setItem('reef.taught','1'); }catch(e){}
+    hint(); }
 };
 
-function updateMeta(){
-  const el=document.getElementById('meta');
-  const n=anomalies.length;
-  let note;
-  if(phase==='chart'){
-    note = strokes.size
-      ? '<b>'+strokes.size+' cell'+(strokes.size===1?'':'s')+' painted</b> — pick a brush and drag across the board'
-      : 'pick a brush and paint over the model\u2019s chart; anchors cannot be painted over';
-  } else if(n){
-    note = '<b>'+n+' anomal'+(n===1?'y':'ies')+' detected</b> \u2014 the model has carved a local exception there';
-  } else {
-    note = 'click a cell to survey it, click again to remove';
-  }
-  const anchorLine = phase==='survey'
-    ? 'Anchors: <b>'+anchors.size+' / '+MAX_ANCHORS+'</b>'
-    : 'Survey locked at <b>'+anchors.size+' / '+MAX_ANCHORS+'</b> anchors';
-  el.innerHTML=anchorLine+' &nbsp;·&nbsp; '+note+
-    (phase==='survey' && anchors.size ? ' &nbsp;·&nbsp; par <b>'+par+'</b>' : '');
-  const ph=document.getElementById('phase');
-  if(ph) ph.innerHTML=PHASE_TEXT[phase];
-  const co=document.getElementById('coach');
-  if(co) co.innerHTML=coachLine();
-}
+document.getElementById('mping').addEventListener('click',function(){ setMode('ping'); draw(); });
+document.getElementById('mmark').addEventListener('click',function(){ setMode('mark'); draw(); });
+document.getElementById('reveal').addEventListener('click',reveal);
+document.getElementById('again').addEventListener('click',function(){ build(); });
+document.getElementById('howto').addEventListener('click',function(){ build(); tut.start(); });
+document.getElementById('cnext').addEventListener('click',function(){ tut.next(); });
+document.getElementById('cskip').addEventListener('click',function(){ tut.stop(); });
 
-// Which controls belong to the beat the player is in. Reveal is deliberately not
-// one of them during the survey: without that, locking in is a button nobody
-// presses and the commitment never happens.
-function syncBar(){
-  const show=function(id,on){ const e=document.getElementById(id); if(e&&e.style) e.style.display=on?'':'none'; };
-  show('lock', phase==='survey');
-  show('clear', phase==='survey');
-  show('reveal', phase==='chart');
-  show('back', phase==='chart');
-  show('resetchart', phase==='chart');
-  show('brushbar', phase==='chart');
-  if(document.querySelectorAll)
-    for(const b of document.querySelectorAll('.brush'))
-      b.classList.toggle('sel', +b.dataset.tile===brush);
-}
+var q=(location.search||'').match(/[?&]seed=(\d+)/);
+build(q? +q[1] : null);
+var taught=false; try{ taught=!!localStorage.getItem('reef.taught'); }catch(e){}
+if(!taught) tut.start();
 
-// What the strokes were worth, against the chart the model handed over. This is
-// the whole point of painting: the number is yours, not the algorithm's.
-function strokeValue(){
-  if(!proposal || !strokes.size) return null;
-  return scoreDetail(predicted).points - scoreDetail(proposal).points;
-}
-
-function showScore(){
-  const d=scoreDetail();
-  const sv=strokeValue();
-  const el=document.getElementById('score');
-  el.style.display='block';
-  el.innerHTML='<div class="parline">'+parVerdict()+'</div>'+
-    (sv===null ? '' :
-      'Your <b>'+strokes.size+'</b> painted cell'+(strokes.size===1?'':'s')+': '+
-      '<b style="color:'+(sv<0?'#b04a4a':'#4d7a4a')+'">'+(sv>=0?'+':'')+sv+'</b> pts against the model\u2019s chart<br>')+
-    'Coastline <b>'+(d.acc*100).toFixed(1)+'%</b> correct '+
-    '<span style="color:var(--muted)">(a blind guess scores '+(d.base*100).toFixed(1)+'%)</span><br>'+
-    'Coastline survey <b>'+(d.lift*100).toFixed(1)+'%</b>'+
-    (d.hunt===null ? ' &nbsp;·&nbsp; <span style="color:var(--muted)">nothing was hidden here</span>' : ' &nbsp;·&nbsp; anomalies charted <b>'+(d.hunt*100).toFixed(0)+'%</b>')+
-    ' &nbsp;·&nbsp; anchor bonus ×'+d.eff.toFixed(2)+
-    ' &nbsp;·&nbsp; <span class="big">'+d.points+'</span> pts';
-}
-
-// Spoiler-free: how each stretch of coast ended up, never where anything was.
-// Written after the reveal, so unlike the gauge it can report whether the chart
-// put its exceptions in the right place rather than merely the right quantity.
-function shareText(){
-  const d=scoreDetail();
-  const marks=huntBySector().map(function(g){
-    if(g.total===0) return g.invented>6 ? '\ud83d\udfe5' : '\u2b1c';   // nothing was there
-    const got=g.got/g.total;
-    return got>=0.7 ? '\ud83d\udfe9' : got>=0.25 ? '\ud83d\udfe8' : '\u2b1b';
-  }).join('');
-  const url = typeof location==='undefined' ? ''
-    : '\n'+(isDaily ? location.origin+location.pathname : location.href);
-  return 'Tide Table '+(isDaily ? '#'+dayNumber() : 'seed '+seed)+
-    '  '+anchors.size+'\u2693  '+d.points+' pts (par '+par+')\n'+marks+url;
-}
-
-function showShare(){
-  const el=document.getElementById('share');
-  if(!el) return;
-  el.style.display='block';
-  const txt=shareText();
-  el.innerHTML='<pre id="sharetext">'+txt.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</pre>'+
-    '<button id="copy">Copy result</button>';
-  document.getElementById('copy').addEventListener('click',function(){
-    const btn=document.getElementById('copy');
-    const done=function(ok){ btn.textContent = ok ? 'Copied' : 'Select the text above'; };
-    if(navigator.clipboard && navigator.clipboard.writeText)
-      navigator.clipboard.writeText(txt).then(function(){done(true);},function(){done(false);});
-    else done(false);
-  });
-}
-
-function revealTruth(){
-  if(phase==='revealed') return;
-  if(phase==='survey') lockSurvey();
-  phase='revealed';
-  render(); updateMeta(); syncBar(); showScore(); showShare();
-}
-
-function initUI(){
-  document.getElementById('lock').addEventListener('click',lockSurvey);
-  document.getElementById('reveal').addEventListener('click',revealTruth);
-  document.getElementById('back').addEventListener('click',backToSurvey);
-  document.getElementById('resetchart').addEventListener('click',resetChart);
-  document.getElementById('clear').addEventListener('click',()=>{ anchors=new Map(); predicted=null; predictedSmooth=null; anomalies=[]; support=[]; phase='survey'; proposal=null; strokes=new Map(); render(); updateMeta(); renderGauge(); syncBar(); const s=document.getElementById('score'); if(s) s.style.display='none'; });
-  document.getElementById('new').addEventListener('click',()=>generate());
-  document.getElementById('today').addEventListener('click',()=>generate(dailySeed()));
-  if(document.querySelectorAll)
-    for(const b of document.querySelectorAll('.brush'))
-      b.addEventListener('click',function(){ setBrush(+b.dataset.tile); });
-  // a stroke is a drag, so it ends wherever the pointer is released
-  if(typeof window!=='undefined' && window.addEventListener)
-    window.addEventListener('mouseup',function(){ dragging=false; });
-  const q=(typeof location!=='undefined'&&location.search||'').match(/[?&]seed=(\d+)/);
-  generate(q ? +q[1] : dailySeed());
-}
-
-if(typeof document!=='undefined' && typeof window!=='undefined'){
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',initUI);
-  else initUI();
-}
-
-if(typeof globalThis!=='undefined'){
-  globalThis.TideTable={generate,predict,dailySeed,dayNumber,shareText,getSeed:()=>seed,coastlineScore,baselineScore,scoreDetail,huntScore,gauge,unexplainedCells,getTruth:()=>truth,getPredicted:()=>predicted,
-    getAnomalies:()=>anomalies,getSupport:()=>support,getTruthAnomalies:()=>truthAnomalies,setAnchor:(r,c)=>{anchors.set(r+','+c,truth[r][c]);},clearAnchors:()=>{anchors=new Map();anomalies=[];phase='survey';proposal=null;strokes=new Map();},
-    lockSurvey,backToSurvey,resetChart,revealTruth,strokeValue,setBrush,paint,
-    getPhase:()=>phase,getProposal:()=>proposal,getStrokeCount:()=>strokes.size,
-    getSmooth:()=>predictedSmooth,getTruthSmooth:()=>smoothTruth(),huntBySector,
-    getPar:()=>par,coachLine,weakColumns,sectorsByState,PAR_ANCHORS,
-    ROWS,COLS,MAX_ANCHORS,ANCHOR_COST,HUNT_WEIGHT,GAUGE_SECTORS,WATER,SAND,LAND};
-}
+if(typeof globalThis!=='undefined') globalThis.Reef={
+  build:build,reading:reading,ruledOut:ruledOut,ringCount:ringCount,
+  getReefs:function(){return reefs;},ping:function(i){pings.set(i,reading(i));},
+  mark:function(i){marks.add(i);},getMarks:function(){return marks;},
+  getPings:function(){return pings;},reveal:reveal,
+  COLS:COLS,ROWS:ROWS,REEFS:REEFS,PINGS:PINGS,SEP:SEP,N:N,dist:dist,xy:xy};
 </script>
 </body>
 </html>
