@@ -1,5 +1,17 @@
 # Reef
 
+> ## Dead project. Not maintained.
+>
+> This began as a coastline-prediction game. The idea does not work, and four
+> attempts to rescue it are measured and written up in [DESIGN.md](DESIGN.md).
+> What survives is Reef, below: a small hidden-object puzzle that does work, but
+> that sits squarely inside Minesweeper's genre and is not worth developing
+> further.
+>
+> **The useful thing in this repository is [DESIGN.md](DESIGN.md)** — five game
+> designs, the measurement that killed each one, and the hour-long test that
+> would have caught all of them before any interface was built.
+
 Four reefs are hidden on a grid. You get ten sonar pings to find them.
 
 **Play it: <https://raw.githack.com/konstantinos-malavazos/tide-table/main/index.html>**
