@@ -64,7 +64,64 @@ The structural cause: a measurement told you the coast height in one column and 
 
 **The evidence was in the test output the whole time.** A flat accuracy ladder printed on every run and was read as "no regression" rather than "the budget does not matter". Three rounds of legibility work went into explaining a game that had nothing to explain. The lesson is the ordering: establish that thinking beats not thinking *first*, and only then spend effort on tutorials, scoring polish, and prose.
 
-## Open: can the coastline come back?
+## Four ways the coastline failed, and the one test that would have caught them
+
+The owner liked the coastline premise and found Reef too close to Minesweeper. Both fair. Four designs were built and measured to bring the coast back. All four failed, and they failed the same way: **the player's decisions did not change the outcome.**
+
+### 1. Coastline + tile probes (the original game, v1-v9)
+
+A probe told you the tile you stood on. Spending twelve anchors scored 303 points against 286 for four. The smooth fit between measurements did the work, and a machine interpolates better than a person.
+
+### 2. Coastline + distance probes
+
+A ping reports how far the water's edge is. Solved exactly by DP over columns with a bitmask for touched rings.
+
+| pings | consistent coastlines left | columns exactly right |
+|---|---|---|
+| 5 | 25,700 | 8.1 of 16 |
+| 8 | 1,170 | 10.9 of 16 |
+| 11 | 192 | 13.2 of 16 |
+
+Placement mattered twelve to one against random pings, but it never collapses. Perfect play still leaves 192 possibilities.
+
+### 3. Coastline + sonar rays
+
+A ray cast sideways or diagonally eliminates a whole line of water and pins one point of coast, which is shape reconstruction from silhouettes rather than neighbourhood counting. On candidate count it looked like a triumph: 816 consistent coastlines from smart casting against 478,800 from random, a 586-fold gap.
+
+On the coastline you would actually *draw*, it evaporated:
+
+| rays | smart | systematic fan | random |
+|---|---|---|---|
+| 12 | 7.7 of 18 | 7.1 | 8.4 |
+| 16 | 10.0 of 18 | 11.2 | 9.2 |
+
+No consistent ordering; the gaps sit inside the noise at n=30. **Narrowing the possibility space did not produce a better drawing.** This was nearly written up as a success on the strength of the candidate count alone, which is the same error as reading the old game's flat accuracy ladder as "no regression".
+
+There is also a hard limit: rays come from the water, so a bay behind a headland is occluded and unknowable at any budget.
+
+### 4. Sail it instead of mapping it
+
+Change the verb. The coast is visible; the depth is not. Cross west to east, a cell passable when depth + tide >= draft, each turn spent either moving or sounding ahead, against a falling tide.
+
+| draft | dash (never sounds) | careful (24 soundings) | pilot |
+|---|---|---|---|
+| 4 | 92% | 92% | 91% |
+| 6 | 61% | 62% | 57% |
+| 7 | 34% | 35% | 32% |
+
+**Sounding twenty-four times performs identically to never sounding.** Whether you get across is a property of the map. At shallow drafts a route nearly always exists, so charging blind works; at deep drafts none exists, so nothing works. There is no band between where information changes the outcome.
+
+### What the four have in common
+
+A hidden-information game has skill in it only when **the answer is hard to guess without probing, and the probes can actually resolve it.** Reef sits in that window: four reefs among 96 cells is high entropy, distance-to-nearest is informative, and naming exact cells requires all of it.
+
+Every coastline design fails one side or the other. A coastline is smooth, which is precisely what makes it look like a real coast, and smooth means low entropy, so a few points plus interpolation gets most of the way. The premise fights the puzzle. Anomalies were bolted onto v3 as a source of entropy and did work when found (+207 points), but could not be found reliably; that was the same wall in a costume.
+
+### The test to run before building anything
+
+**Simulate a thinking policy and a naive one, and check the thinking one wins.** No UI, no tutorial, no scoring, no prose until that gap exists. It takes under an hour and it would have killed all four of these before a line of interface was written. It is the only measurement in this repository that has ever mattered.
+
+## Superseded: the earlier write-up of design 2
 
 The owner liked the idea of reconstructing a hidden coastline and disliked that Reef is close to Minesweeper. Both are fair. So the question is whether the coastline can be rebuilt on a probe that actually chains.
 
@@ -85,7 +142,7 @@ But it does not collapse. Perfect play still leaves 192 possibilities and gets 1
 - **For it:** partial credit suits a curve better than Reef's binary found-or-missed, and "how close did you get" is a natural score for a coastline. The skill gradient is real.
 - **Against it:** a puzzle that never resolves may feel unsatisfying, and the endgame is guessing between near-identical curves rather than deducing.
 
-Unmeasured, and needed before building: how a careless player scores (only perfect play has been measured), whether a larger ping budget collapses it, and whether restricting pings to the map edges — sonar cast from a ship — makes the geometry more legible.
+All three of those unknowns were then measured and are reported above. The careless player scores about as well as the careful one, a larger budget does not collapse it, and edge-cast sonar makes things worse rather than better. This section is kept only because the earlier version of this file recommended the idea, and the record should show the recommendation and its refutation together.
 
 ## Backlog
 
