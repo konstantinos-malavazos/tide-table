@@ -1,5 +1,14 @@
 # Design notes
 
+> **This project is dead.** It is kept as a record of what was tried and why it
+> failed. Nothing here is a plan for future work.
+>
+> Short version: a coastline-prediction game was built over nine versions and
+> turned out not to be a game — the player's choices barely changed the score.
+> Four redesigns failed the same way. A replacement puzzle (Reef) works but is
+> derivative. The one transferable lesson is at the end, under
+> "The test to run before building anything".
+
 Everything here is grounded in measurements. Where a number appears, it came from running the real thing over many boards.
 
 The house rules that produced the good results, kept from the previous project:
